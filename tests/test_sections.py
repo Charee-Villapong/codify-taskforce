@@ -109,33 +109,23 @@ def test_section_hash_is_stable_when_content_is_unchanged(harness):
 def test_section_hash_changes_when_the_body_changes(harness):
     repo = _repo_with_document(harness)
     before = harness.section("doc.md", "Top > Child A")["section_hash"]
-    sibling_before = harness.section("doc.md", "Top > Child B")[
-        "section_hash"
-    ]
+    sibling_before = harness.section("doc.md", "Top > Child B")["section_hash"]
 
-    harness.write_file(
-        repo, "doc.md", DOCUMENT.replace("body A", "body A, revised")
-    )
+    harness.write_file(repo, "doc.md", DOCUMENT.replace("body A", "body A, revised"))
     harness.commit_all(repo, "revise child A")
     harness.state_file.unlink(missing_ok=True)  # force a fresh full scan
 
     after = harness.section("doc.md", "Top > Child A")["section_hash"]
-    sibling_after = harness.section("doc.md", "Top > Child B")[
-        "section_hash"
-    ]
+    sibling_after = harness.section("doc.md", "Top > Child B")["section_hash"]
     assert after != before
-    assert sibling_after == sibling_before, (
-        "an untouched section must keep its hash"
-    )
+    assert sibling_after == sibling_before, "an untouched section must keep its hash"
 
 
 def test_section_hash_changes_when_the_heading_line_changes(harness):
     repo = _repo_with_document(harness)
     before = harness.section("doc.md", "Top > Child A")["section_hash"]
 
-    harness.write_file(
-        repo, "doc.md", DOCUMENT.replace("## Child A", "## Child A2")
-    )
+    harness.write_file(repo, "doc.md", DOCUMENT.replace("## Child A", "## Child A2"))
     harness.commit_all(repo, "rename heading")
     harness.state_file.unlink(missing_ok=True)
 

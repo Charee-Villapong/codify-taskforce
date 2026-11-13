@@ -16,9 +16,7 @@ def test_no_state_means_full_mode(harness, simple_repo):
     assert payload["mode"] == "full"
 
 
-def test_full_mode_lists_exactly_the_allowlisted_files(
-    harness, simple_repo
-):
+def test_full_mode_lists_exactly_the_allowlisted_files(harness, simple_repo):
     payload = harness.extract()
     paths = sorted(entry["path"] for entry in payload["files"])
     assert paths == ["rules/a.md", "rules/b.md"]
@@ -35,9 +33,7 @@ def test_first_extract_has_no_previously_judged(harness, simple_repo):
             assert section["previously_judged"] is None
 
 
-def test_allowlist_does_not_expand_to_other_repo_files(
-    harness, simple_repo
-):
+def test_allowlist_does_not_expand_to_other_repo_files(harness, simple_repo):
     # A file that lives in the same repository but is not allowlisted.
     harness.write_file(simple_repo, "rules/extra.md", "# Extra\n\nx\n")
     harness.write_file(simple_repo, "notes.md", "# Notes\n\nx\n")
@@ -63,6 +59,7 @@ def test_allowlisted_file_with_no_headings_is_still_listed(harness):
 # ----------------------------------------------------------------------
 # denylist
 # ----------------------------------------------------------------------
+
 
 def test_denylist_exact_relative_path_is_excluded(harness):
     repo = harness.init_repo()

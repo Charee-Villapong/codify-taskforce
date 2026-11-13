@@ -83,9 +83,7 @@ def test_secret_like_text_is_a_hit_on_the_right_line(
     [(line, value) for _id, line, value in SECRET_CASES],
     ids=[case_id for case_id, _line, _value in SECRET_CASES],
 )
-def test_matched_values_never_appear_in_the_output(
-    harness, secret_line, secret_value
-):
+def test_matched_values_never_appear_in_the_output(harness, secret_line, secret_value):
     path = _write_text(harness, "target.txt", [secret_line])
     result = harness.run_raw("scan-text", "--file", str(path))
     assert result.returncode == 0, result.stderr
@@ -136,17 +134,14 @@ def test_scan_text_on_missing_file_fails(harness):
 # local patterns file
 # ----------------------------------------------------------------------
 
+
 def _config_with_local_patterns(harness, repo):
     patterns = harness.tmp_path / "local-patterns.txt"
     patterns.write_text(
-        "# a comment line that must be ignored\n"
-        "\n"
-        "PROJECT_CODENAME_[A-Z]+\n",
+        "# a comment line that must be ignored\n" "\n" "PROJECT_CODENAME_[A-Z]+\n",
         encoding="utf-8",
     )
-    harness.config_for_repo(
-        repo, ["rules/a.md"], local_patterns_file=patterns
-    )
+    harness.config_for_repo(repo, ["rules/a.md"], local_patterns_file=patterns)
 
 
 def test_local_pattern_is_applied(harness, simple_repo):
@@ -163,17 +158,13 @@ def test_local_pattern_is_applied(harness, simple_repo):
 
 def test_local_pattern_value_does_not_leak(harness, simple_repo):
     _config_with_local_patterns(harness, simple_repo)
-    path = _write_text(
-        harness, "local.txt", ["see PROJECT_CODENAME_FALCON here"]
-    )
+    path = _write_text(harness, "local.txt", ["see PROJECT_CODENAME_FALCON here"])
     result = harness.run_raw("scan-text", "--file", str(path))
     assert result.returncode == 0, result.stderr
     assert "PROJECT_CODENAME_FALCON" not in result.stdout
 
 
-def test_text_matching_only_a_commented_local_pattern_is_clean(
-    harness, simple_repo
-):
+def test_text_matching_only_a_commented_local_pattern_is_clean(harness, simple_repo):
     # The ``#`` line in the patterns file is a comment, not a pattern, and
     # the codename pattern does not occur here, so this must stay clean.
     _config_with_local_patterns(harness, simple_repo)

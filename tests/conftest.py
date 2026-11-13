@@ -59,9 +59,9 @@ class CodifyHarness:
             capture_output=True,
             text=True,
         )
-        assert result.returncode == 0, (
-            f"git {' '.join(args)} failed: {result.stderr.strip()}"
-        )
+        assert (
+            result.returncode == 0
+        ), f"git {' '.join(args)} failed: {result.stderr.strip()}"
         return result
 
     def init_repo(self, name: str | None = None) -> Path:
@@ -130,12 +130,8 @@ class CodifyHarness:
         )
         return path
 
-    def config_for_repo(
-        self, repo: Path, files: list[str], **kwargs
-    ) -> Path:
-        return self.write_config(
-            [{"repo": str(repo), "files": list(files)}], **kwargs
-        )
+    def config_for_repo(self, repo: Path, files: list[str], **kwargs) -> Path:
+        return self.write_config([{"repo": str(repo), "files": list(files)}], **kwargs)
 
     # ------------------------------------------------------------------
     # generic JSON-file helper (CLI ``--file`` inputs)
@@ -192,9 +188,9 @@ class CodifyHarness:
                 f"CLI {args} did not emit a single JSON document on "
                 f"stdout: {result.stdout!r}"
             ) from exc
-        assert isinstance(payload, dict), (
-            f"CLI {args} must emit a JSON object, got {type(payload)}"
-        )
+        assert isinstance(
+            payload, dict
+        ), f"CLI {args} must emit a JSON object, got {type(payload)}"
         return payload
 
     # ------------------------------------------------------------------
@@ -221,8 +217,7 @@ class CodifyHarness:
             if section["heading"] == heading:
                 return section
         raise AssertionError(
-            f"section {heading!r} not found in {rel_path!r}: "
-            f"{entry['sections']!r}"
+            f"section {heading!r} not found in {rel_path!r}: " f"{entry['sections']!r}"
         )
 
     def state_commit(self, judged: list[dict], advance_commits: dict) -> dict:

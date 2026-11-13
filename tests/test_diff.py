@@ -114,9 +114,9 @@ def test_corrupt_state_file_falls_back_to_full_with_warning(harness):
 
     payload = harness.extract()
     assert payload["mode"] == "full"
-    assert payload.get("state_warning"), (
-        "a corrupt state file must be reported via state_warning"
-    )
+    assert payload.get(
+        "state_warning"
+    ), "a corrupt state file must be reported via state_warning"
     assert [e["path"] for e in payload["files"]] == ["rules/a.md"]
 
 
