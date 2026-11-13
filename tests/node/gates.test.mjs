@@ -39,7 +39,7 @@ function loadGates(source) {
   const section = extractGates(source);
   return eval(
     section +
-      "\n;({ checklistComplete, applyChecklistGate, applySecrecyGate, applyFilingCap, filingPriority, candidateKey })",
+      "\n;({ checklistComplete, applyChecklistGate, applySecrecyGate, applyFilingCap, filingPriority, candidateKey, resolveVerdictConflicts })",
   );
 }
 
@@ -240,4 +240,92 @@ test("起票上限: 上限0なら全件が繰り越しになる", () => {
   );
   assert.deepEqual(fileNow, []);
   assert.equal(carriedOver.length, 2);
+});
+
+// ----------------------------------------------------------------------
+// 書き換えケース（ズレ1）: verdict "rewritable" は起票・繰り越しの対象
+// ----------------------------------------------------------------------
+
+test("書き換え: 「書き換え可」は起票対象に入り、優先順はコード化候補の後", () => {
+  const rewrite = candidate({
+    kind: "rewrite",
+    heading: "Rewrite",
+    verdict: "rewritable",
+  });
+  const plain = candidate({ kind: "codable", heading: "Plain" });
+  const { fileNow, carriedOver } = gates.applyFilingCap([rewrite, plain], 10);
+  assert.deepEqual(
+    fileNow.map((c) => c.heading),
+    ["Plain", "Rewrite"],
+  );
+  assert.deepEqual(carriedOver, []);
+});
+
+test("書き換え: 上限超過した「書き換え可」は繰り越しに入る（破棄しない）", () => {
+  const plain = candidate({ kind: "codable", heading: "Plain" });
+  const rewrite = candidate({
+    kind: "rewrite",
+    heading: "Rewrite",
+    verdict: "rewritable",
+  });
+  const { fileNow, carriedOver } = gates.applyFilingCap([rewrite, plain], 1);
+  assert.deepEqual(
+    fileNow.map((c) => c.heading),
+    ["Plain"],
+  );
+  assert.deepEqual(
+    carriedOver.map((c) => c.heading),
+    ["Rewrite"],
+  );
+});
+
+test("書き換え: 秘匿ヒットした「書き換え可」は「要・本人確認」へ回す", () => {
+  const rewrite = candidate({
+    kind: "rewrite",
+    heading: "Rewrite",
+    verdict: "rewritable",
+  });
+  const scans = [{ key: gates.candidateKey(rewrite), hit: true }];
+  const [gated] = gates.applySecrecyGate([rewrite], scans);
+  assert.equal(gated.verdict, "needs_user");
+  assert.equal(gated.gate_note, "secrecy-hit");
+});
+
+// ----------------------------------------------------------------------
+// 判定の衝突（ズレ2）: 同一キーへの矛盾する2判定は上書きせず衝突にする
+// ----------------------------------------------------------------------
+
+test("衝突: 同一キーに「可」と「不可」があれば衝突として「要・本人確認」にする", () => {
+  const asCodable = candidate({ verdict: "codable" });
+  const asRewrite = candidate({ kind: "rewrite", verdict: "not_codable" });
+  const resolved = gates.resolveVerdictConflicts([asCodable, asRewrite]);
+  assert.equal(resolved.length, 1);
+  assert.equal(resolved[0].verdict, "needs_user");
+  assert.equal(resolved[0].reason_code, "verdict-conflict");
+});
+
+test("衝突: 同一キー・同一判定の重複は1件に畳む", () => {
+  const one = candidate({ verdict: "codable" });
+  const two = candidate({ verdict: "codable" });
+  const resolved = gates.resolveVerdictConflicts([one, two]);
+  assert.equal(resolved.length, 1);
+  assert.equal(resolved[0].verdict, "codable");
+});
+
+test("衝突: 書き換え候補に付いた「可」は「書き換え可」に正規化する", () => {
+  const mislabeled = candidate({ kind: "rewrite", verdict: "codable" });
+  const [resolved] = gates.resolveVerdictConflicts([mislabeled]);
+  assert.equal(resolved.verdict, "rewritable");
+  assert.equal(resolved.kind, "rewrite");
+});
+
+test("衝突: キーが異なる候補はそのまま残す", () => {
+  const a = candidate({ heading: "A", verdict: "codable" });
+  const b = candidate({
+    heading: "B",
+    kind: "rewrite",
+    verdict: "rewritable",
+  });
+  const resolved = gates.resolveVerdictConflicts([a, b]);
+  assert.equal(resolved.length, 2);
 });

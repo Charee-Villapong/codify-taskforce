@@ -60,6 +60,9 @@ python -m codify_taskforce registry-list
 - `denylist` — パスベースの除外（完全一致 or パスセグメント一致）
 - `state_file` / `queue_file` — 状態ファイル／確認待ちキューの置き場所
 - `weekly_issue_cap` — 週あたり起票上限
+  （コード化ケース・書き換えケース・相反ケースで共有する1つの枠。
+  優先順は相反 ＞ コード化（実績あり）＞ コード化 ＞ 書き換えで、
+  ワークフローのゲートが担保する。超過分は翌週へ繰り越し）
 - `daily_presentation_cap` — 1日の確認提示上限
 - `trial_weeks` — 初回試行期間（提示のみ）の週数。0なら起票する
 - `checklist_version` — 判定チェックリストの版
@@ -70,9 +73,15 @@ python -m codify_taskforce registry-list
 ## 状態ファイルの保持項目
 
 リポジトリごとの前回成功コミット、ファイルごとのハッシュ、
-セクション記録（判定コード・Issue番号つき）、レジストリのみ。
+セクション記録（種別・判定コード・Issue番号つき）、レジストリのみ。
 本文・要約・判定理由は保持しない。書き込みは原子的
 （tmpファイル＋os.replace）。
+
+判定コードは `codable`（コード化可）／`rewritable`（書き換え可）／
+`not_codable`（不可）／`needs_user`（要・本人確認）。種別は
+`codable`／`rewrite`／`contradiction`。同一セクションに矛盾する
+判定が混ざった state-commit の入力は、全体を拒否して状態を
+進めない（衝突の解消はワークフローのゲートが行う）。
 
 ## diff モードの抽出範囲
 

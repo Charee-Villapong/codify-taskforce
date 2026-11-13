@@ -37,6 +37,51 @@ function applyChecklistGate(candidates) {
   }
   return gated;
 }
+// 判定の衝突解消ゲート。文章のルールではなく、この関数の判定が正。
+// 同一セクション（repo・path・heading・section_hash が同じ）に複数の
+// 判定が入ったら、上書きで片方を黙って消さずに畳む:
+// - 書き換え候補に付いた「可」は「書き換え可」に正規化する
+// - 同じ判定の重複は1件にする
+// - 判定が食い違う場合は衝突として「要・本人確認」へ回す
+//   （reason_code は "verdict-conflict"。記録段で確認待ちキューへ載る）
+function resolveVerdictConflicts(candidates) {
+  const order = [];
+  const byKey = new Map();
+  for (const c of candidates || []) {
+    const copy = Object.assign({}, c);
+    if (copy.kind === "rewrite" && copy.verdict === "codable") {
+      copy.verdict = "rewritable";
+    }
+    const key = candidateKey(copy);
+    if (!byKey.has(key)) {
+      byKey.set(key, []);
+      order.push(key);
+    }
+    byKey.get(key).push(copy);
+  }
+  const resolved = [];
+  for (const key of order) {
+    const group = byKey.get(key);
+    const verdicts = [...new Set(group.map((c) => c.verdict))];
+    if (verdicts.length === 1) {
+      resolved.push(group[0]);
+      continue;
+    }
+    const merged = Object.assign({}, group[0]);
+    merged.verdict = "needs_user";
+    merged.reason_code = "verdict-conflict";
+    merged.guard = group.some((c) => !!c.guard);
+    merged.has_precedent = group.some((c) => !!c.has_precedent);
+    const kinds = group.map((c) => c.kind);
+    merged.kind = kinds.includes("contradiction")
+      ? "contradiction"
+      : kinds.includes("codable")
+        ? "codable"
+        : group[0].kind;
+    resolved.push(merged);
+  }
+  return resolved;
+}
 // 秘匿ゲート。文章のルールではなく、この関数の判定が正。
 // scan-text でヒットした候補は起票せず「要・本人確認」へ回す。
 function applySecrecyGate(candidates, scanResults) {
@@ -46,7 +91,7 @@ function applySecrecyGate(candidates, scanResults) {
   }
   return (candidates || []).map((c) => {
     const copy = Object.assign({}, c);
-    if (copy.verdict === "codable" && hits[candidateKey(copy)]) {
+    if ((copy.verdict === "codable" || copy.verdict === "rewritable") && hits[candidateKey(copy)]) {
       copy.verdict = "needs_user";
       copy.gate_note = "secrecy-hit";
     }
@@ -54,16 +99,19 @@ function applySecrecyGate(candidates, scanResults) {
   });
 }
 // 起票上限ゲート。文章のルールではなく、この関数の判定が正。
+// 起票対象は「可」と「書き換え可」で、週あたり上限は設定値
+// （weekly_issue_cap）の1つの枠を共有する。
 // 優先順は「相反 ＞ コード化候補（実績あり） ＞ コード化候補 ＞ 書き換え候補」。
 // 上限を超えた分は起票せず翌週へ繰り越す（破棄しない）。
 function filingPriority(candidate) {
   if (candidate.kind === "contradiction") return 0;
+  if (candidate.verdict === "rewritable") return 3;
   if (candidate.kind === "codable" && candidate.has_precedent) return 1;
   if (candidate.kind === "codable") return 2;
   return 3;
 }
 function applyFilingCap(candidates, cap) {
-  const fileable = (candidates || []).filter((c) => c.verdict === "codable");
+  const fileable = (candidates || []).filter((c) => c.verdict === "codable" || c.verdict === "rewritable");
   const ordered = fileable.slice().sort((a, b) => filingPriority(a) - filingPriority(b));
   return { fileNow: ordered.slice(0, cap), carriedOver: ordered.slice(cap) };
 }
@@ -218,7 +266,7 @@ const judgeSchema = {
           heading: { type: "string" },
           section_hash: { type: "string" },
           title: { type: "string" },
-          verdict: { type: "string", enum: ["codable", "not_codable", "needs_user"] },
+          verdict: { type: "string", enum: ["codable", "rewritable", "not_codable", "needs_user"] },
           guard: { type: "boolean" },
           has_precedent: { type: "boolean" },
           reason_code: { type: "string" },
@@ -391,7 +439,7 @@ const extract = await runStage("extract-diff", "1段目：差分抽出", (last, 
     "1. CLI の extract 結果の limits に設定ファイルの上限値（weekly_issue_cap、daily_presentation_cap）が入る。その値を結果の limits に入れる。trial_weeks、checklist_version、org_repo は設定ファイル（" + CONFIG_PATH + "）を読んで結果に含める。",
     "2. CLI を実行する: " + (firstRun ? "初回のため `extract --full`（全件走査）" : "`extract`（前回成功時コミットからのコミット済み差分）") + "。未コミットの変更は対象にならない。",
     "3. 結果の files をそのまま返す（repo・path・sections の heading・section_hash・previously_judged）。セクション本文は結果に含めないこと（原文の引用・転載をしない）。",
-    "4. 判定済み（previously_judged がある）セクションは候補抽出の対象外だが、files には含めたまま返す（判定段が再提示の抑制を確認するため）。",
+    "4. 判定済み（previously_judged がある）セクションも files には含めたまま返す。候補抽出の対象外になるのは起票済み・不可・要確認のものだけで、未起票の「可」「書き換え可」は繰り越しとして候補抽出段が再提示する（判定段が再提示の抑制を確認するため）。",
     "5. 3回再試行しても抽出自体ができなかった場合は status を failed にする。",
     retryNote(last, attempt)
   ].join("\n"), extractSchema
@@ -429,7 +477,7 @@ const candidates = await runStage("extract-candidates", "2段目：候補抽出�
     JSON.stringify(extract.files || []),
     "判定基準文書: " + CRITERIA_PATH + "（docs/CRITERIA.md）。",
     "抽出のルール:",
-    "- previously_judged があるセクションは候補にしない（判定済みは実質変更なしに再提示しない）。",
+    "- previously_judged があるセクションは、原則として候補にしない（判定済みは実質変更なしに再提示しない）。ただし例外として、previously_judged の verdict_code が \"codable\" または \"rewritable\" で issue_number が無い（未起票＝前回までに上限で繰り越された）セクションは、繰り越し分として同じ kind で候補に再提示する（起票済み・not_codable・needs_user の再提示はしない）。",
     "- コード化候補（kind: \"codable\"）: チェックリストの必須項目（入力の出所／出力／合否条件／失敗時の動作／正常系・異常系テスト例各1件）が見込めるルール。必須項目は分かる範囲で埋め、分からなければ空文字にする（空欄のまま「可」にしないのは判定段とハーネスのゲートの仕事）。",
     "- 書き換え候補（kind: \"rewrite\"）: docs/CRITERIA.md の「わかりにくさの判定基準」に当たる書き方のルール（曖昧な数量詞が本質に含まれる／長い・入れ子・二重否定の文／読む人依存の解釈が残る／条件と例外が分離していない）。書き換え自体はここでは行わない（開発段の仕事）。",
     "- 候補は candidates に1件ずつ入れる: kind、repo、path、heading、section_hash、title（短い件名）、summary（変数名・構造での要約。具体値は書かない）、has_precedent（過去に実際に漏れた実績のあるルールなら true）、checklist（6項目。コード化候補のみ）。",
@@ -484,10 +532,11 @@ const judge = await runStage("judge-candidates", "4段目：判定", (last, atte
     "判定対象の候補:",
     JSON.stringify(allCandidates),
     "分類のルール:",
-    "- 第1軸「コード化可否」: codable（可）／not_codable（不可）／needs_user（要・本人確認）。チェックリストの必須項目（入力の出所／出力／合否条件／失敗時の動作／正常系・異常系テスト例各1件）が1つでも欠ければ「可」にしない（「要・本人確認」以下に落とす）。",
+    "- 第1軸「コード化可否」: codable（可）／rewritable（書き換え可。書き換え候補のみ）／not_codable（不可）／needs_user（要・本人確認）。チェックリストの必須項目（入力の出所／出力／合否条件／失敗時の動作／正常系・異常系テスト例各1件）が1つでも欠ければ「可」にしない（「要・本人確認」以下に落とす）。",
     "- 第2軸「リスク」: guard（要ガード）の有無。不可逆操作（送信・削除・支払い等）や情報漏洩に触れる候補は guard を true にする（可否とは別軸）。",
     "- 相反候補（kind: \"contradiction\"）は、正の判断（どちらを正とするか）が要る場合は needs_user にする。",
-    "- 書き換え候補（kind: \"rewrite\"）も同じチェックリストで判定する（書き換えの実施は開発段の仕事で、ここでは判定だけ）。",
+    "- 書き換え候補（kind: \"rewrite\"）はコード化チェックリストではなく「わかりにくさの判定基準」で判定する。基準に当たり、本人の原則に従う書き換えで解消できる場合は verdict を \"rewritable\"（書き換え可）とする（コード化可否の物差しで \"not_codable\" にしない）。書き換えでも解消できない場合は \"not_codable\"、本人の判断が要る場合は \"needs_user\" とする（書き換えの実施は開発段の仕事で、ここでは判定だけ）。",
+    "- 同じセクションに複数の候補（例: コード化候補と書き換え候補）が来ている場合は、それぞれを独立に判定して返してよい。同一セクションへの判定の衝突の解消はハーネスのコード側が行う（上書きはしない）。",
     "- judged に1件ずつ入れる: kind、repo、path、heading、section_hash、title、verdict、guard、has_precedent、reason_code（needs_user の理由を短い符号で。例: \"checklist-incomplete\"、\"needs-decision\"、\"unclear-rule\"）、checklist（6項目。分かる範囲で埋める）。",
     "- 候補が0件でも成功とする。",
     "- 3回再試行しても判定自体ができなかった場合は status を failed にする。",
@@ -503,8 +552,13 @@ if (judge.status !== "success") {
   );
 }
 
+// 判定の衝突解消ゲート（コード側）。同一セクションへの矛盾する2判定を
+// 上書きせず、衝突として「要・本人確認」へ畳む。
+const resolvedJudged = resolveVerdictConflicts(judge.judged || []);
+log("verdict conflict gate applied", { total: (judge.judged || []).length, resolved: resolvedJudged.length, conflicts: resolvedJudged.filter((c) => c.reason_code === "verdict-conflict").length });
+
 // 判定の必須項目ゲート（コード側）。必須項目が欠けた「可」は「要・本人確認」へ落とす。
-const gatedJudged = applyChecklistGate(judge.judged || []);
+const gatedJudged = applyChecklistGate(resolvedJudged);
 log("checklist gate applied", { total: gatedJudged.length, codable: gatedJudged.filter((c) => c.verdict === "codable").length, needsUser: gatedJudged.filter((c) => c.verdict === "needs_user").length });
 
 phase("secrecy");
@@ -512,12 +566,12 @@ const secrecy = await runStage("check-secrecy", "5段目：秘匿チェック", 
   [
     "あなたは「コード化タスクフォースの秘匿チェック」専任のエージェントです。週次ハーネスの5段目です。役割は1つだけ: 起票する Issue 本文の案を CLI の scan-text で検査し、候補ごとのヒット有無を構造化して返すこと。対象mdへの書き込みは絶対にしないでください。",
     commonRules,
-    "判定済みの候補（verdict が codable のものが起票対象）:",
+    "判定済みの候補（verdict が codable／rewritable のものが起票対象）:",
     JSON.stringify(gatedJudged),
     "手順:",
-    "1. verdict が codable の候補ごとに、Issue 本文の案を作る。原文の引用・コードブロックでの転載はしない。要約は具体値（接続先、ホスト名、固有名、数値）でなく、変数名・構造（例: 「上限チェック」）で書く。対象mdへの参照（リポジトリ内はパスと見出し）、判定理由、想定する担保の形（検証コード／ハーネスの段／カウンタ等）を書く。",
+    "1. verdict が codable または rewritable の候補ごとに、Issue 本文の案を作る。原文の引用・コードブロックでの転載はしない。要約は具体値（接続先、ホスト名、固有名、数値）でなく、変数名・構造（例: 「上限チェック」）で書く。対象mdへの参照（リポジトリ内はパスと見出し）、判定理由、想定する担保の形（検証コード／ハーネスの段／カウンタ等）を書く。書き換え候補の本文案には、わかりにくさの判定基準のどれに当たるかと、書き換えの原則（シンプルに・短く・平易に、意味の保存）に従う旨を書く。",
     "2. 本文の案を1候補1ファイルの一時ファイルに書き（ワークフロー作業ディレクトリ配下）、CLI `scan-text --file <一時ファイル>` で検査する。ローカルパターンファイルは設定の local_patterns_file を使う（CLIが設定から読む）。",
-    "3. scans に1件ずつ入れる: key（repo・path・heading・section_hash を \"|\" で結合したもの）、hit（ヒットすれば true）。verdict が codable でない候補は scans に入れない。",
+    "3. scans に1件ずつ入れる: key（repo・path・heading・section_hash を \"|\" で結合したもの）、hit（ヒットすれば true）。verdict が codable でも rewritable でもない候補は scans に入れない。",
     "4. ヒットした候補の起票可否の判断はハーネスのコード側が行うので、あなたはヒット有無だけを返す（起票を止める判断はしない）。",
     "5. 3回再試行しても検査自体ができなかった場合は status を failed にする。",
     retryNote(last, attempt)
@@ -613,8 +667,8 @@ const record = await runStage("record-results", "7段目：記録", (last, attem
     "前進させるリポジトリ（繰り越しがあるリポジトリは含まない）:",
     JSON.stringify(advanceRepos),
     "手順（この順序を守ること）:",
-    "1. queue-add: verdict が needs_user の候補を、確認待ちキューへ追加する。入力は [{key, title, repo, path, heading, section_hash, reason_code, created}] の配列で、key は repo・path・heading・section_hash を \"|\" で結合したもの、created は今日の日付（" + date + "）の ISO 時刻、reason_code は候補の reason_code（無ければ \"needs_user\"）。CLI: `queue-add --file <items.json>`。同じ key の pending が既にあれば追加されない（重複排除）。",
-    "2. state-commit: 判定記録と前回成功コミットの前進を反映する。入力は {judged: [{repo, path, heading, section_hash, verdict_code, issue_number, guard}], advance_commits: {repo: commit}}。judged には最終判定の全件を入れる（起票済みは issue_number に「起票済みの Issue（候補キー→Issue番号）」の対応表の番号、繰り越し分は verdict_code \"codable\"・issue_number null、needs_user・not_codable は issue_number null）。本文・要約・判定理由は入力に入れない（状態ファイルに保持しない項目のため）。advance_commits には前進させるリポジトリだけを入れ、各リポジトリの HEAD コミット（`git -C <repo> rev-parse HEAD`）を値にする。CLI: `state-commit --file <results.json>`。",
+    "1. queue-add: verdict が needs_user の候補を、確認待ちキューへ追加する（判定の衝突で落とされた候補も含む。その場合 reason_code は \"verdict-conflict\" になっている）。入力は [{key, title, repo, path, heading, section_hash, reason_code, created}] の配列で、key は repo・path・heading・section_hash を \"|\" で結合したもの、created は今日の日付（" + date + "）の ISO 時刻、reason_code は候補の reason_code（無ければ \"needs_user\"）。CLI: `queue-add --file <items.json>`。同じ key の pending が既にあれば追加されない（重複排除）。",
+    "2. state-commit: 判定記録と前回成功コミットの前進を反映する。入力は {judged: [{repo, path, heading, section_hash, verdict_code, kind, issue_number, guard}], advance_commits: {repo: commit}}。judged には最終判定の全件を入れる（起票済みは issue_number に「起票済みの Issue（候補キー→Issue番号）」の対応表の番号、繰り越し分は verdict_code は判定のまま（\"codable\"／\"rewritable\"）・issue_number null、needs_user・not_codable は issue_number null）。kind（codable／rewrite／contradiction）も必ず入れる（状態記録に種別を残すため）。同一セクションに矛盾する verdict_code が混ざった入力は CLI が全体を拒否するので、その場合は状態を進めず failed にする。本文・要約・判定理由は入力に入れない（状態ファイルに保持しない項目のため）。advance_commits には前進させるリポジトリだけを入れ、各リポジトリの HEAD コミット（`git -C <repo> rev-parse HEAD`）を値にする。CLI: `state-commit --file <results.json>`。",
     "3. 週次報告を reports（destination は \"ai-org\"）に1件入れる: 「🤖AI組織・事務連絡 コード化タスクフォース週次実行（" + date + "）: 抽出○件・起票○件（Issue番号つき）・確認待ち○件・繰り越し○件」の形で、起票した Issue の URL を付ける。起票も確認待ちも無い週は「今週の候補はありません」と書く。",
     "4. 3回再試行しても記録自体ができなかった場合は status を failed にする（state-commit が失敗したら状態は進んでいない。queue-add 済みの分は重複排除されるため再実行で二重追加されない）。",
     retryNote(last, attempt)

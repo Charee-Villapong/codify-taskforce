@@ -196,6 +196,7 @@ def cmd_state_commit(config: Config, args: argparse.Namespace) -> dict:
         raise CliError(
             "state-commit の advance_commits はオブジェクトである必要があります。"
         )
+    seen_verdicts: dict[tuple, str] = {}
     for record in judged:
         if not isinstance(record, dict):
             raise CliError("judged の各要素はオブジェクトである必要があります。")
@@ -208,6 +209,30 @@ def cmd_state_commit(config: Config, args: argparse.Namespace) -> dict:
                 f"{record['verdict_code']!r} "
                 f"（許容値: {', '.join(state_mod.VERDICT_CODES)}）"
             )
+        kind = record.get("kind")
+        if kind is not None and kind not in state_mod.KIND_CODES:
+            raise CliError(
+                "kind が不正です: "
+                f"{kind!r} "
+                f"（許容値: {', '.join(state_mod.KIND_CODES)}）"
+            )
+        # 同一セクションに矛盾する2判定が入っていたら、上書きで片方を
+        # 黙って消さず、バッチ全体を拒否する（衝突の解消はワークフ
+        # ロー側のゲートが行い、確認待ちキューへ回す）。
+        key = (
+            record["repo"],
+            record["path"],
+            record["heading"],
+            record["section_hash"],
+        )
+        previous = seen_verdicts.get(key)
+        if previous is not None and previous != record["verdict_code"]:
+            raise CliError(
+                "同一セクションに矛盾する判定が含まれています: "
+                f"{record['path']} > {record['heading']} "
+                f"（{previous} と {record['verdict_code']}）"
+            )
+        seen_verdicts[key] = record["verdict_code"]
     for repo, commit in advance_commits.items():
         if not isinstance(commit, str) or not commit:
             raise CliError(f"advance_commits の値が不正です: {repo!r}")

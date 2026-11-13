@@ -10,7 +10,10 @@ from pathlib import Path
 
 STATE_VERSION = 1
 
-VERDICT_CODES = ("codable", "not_codable", "needs_user")
+VERDICT_CODES = ("codable", "rewritable", "not_codable", "needs_user")
+
+# 候補の種別。コード化ケース／書き換えケース／相反ケースを区別する。
+KIND_CODES = ("codable", "rewrite", "contradiction")
 
 # 状態ファイルに保持してよい項目はこれだけ。本文・要約・判定理由は保持しない。
 _JUDGED_FIELDS = (
@@ -19,6 +22,7 @@ _JUDGED_FIELDS = (
     "heading",
     "section_hash",
     "verdict_code",
+    "kind",
     "issue_number",
     "guard",
 )
