@@ -1,0 +1,12 @@
+.env*
+config.local.*
+*.local.*
+secrets/
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+__pycache__/
+.pytest_cache/
+.DS_Store
+scripts/pre_push_patterns.local.txt
