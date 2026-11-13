@@ -11,7 +11,7 @@ const PYTHON = "__PYTHON__";
 const GH = "__GH__";
 const ORG_REPO = "__ORG_OWNER__/__ORG_REPO__";
 
-// === CHECKLIST-GATE-BEGIN ===
+// === CODIFY-GATES-BEGIN ===
 // 判定の必須項目ゲート。文章のルールではなく、この関数の判定が正。
 // 必須項目が1つでも欠けた「可」候補は「要・本人確認」へ落とす。
 const CHECKLIST_REQUIRED = ["input_source", "output", "pass_condition", "failure_action", "test_normal", "test_abnormal"];
@@ -37,9 +37,6 @@ function applyChecklistGate(candidates) {
   }
   return gated;
 }
-// === CHECKLIST-GATE-END ===
-
-// === SECRECY-GATE-BEGIN ===
 // 秘匿ゲート。文章のルールではなく、この関数の判定が正。
 // scan-text でヒットした候補は起票せず「要・本人確認」へ回す。
 function applySecrecyGate(candidates, scanResults) {
@@ -56,9 +53,6 @@ function applySecrecyGate(candidates, scanResults) {
     return copy;
   });
 }
-// === SECRECY-GATE-END ===
-
-// === FILING-CAP-GATE-BEGIN ===
 // 起票上限ゲート。文章のルールではなく、この関数の判定が正。
 // 優先順は「相反 ＞ コード化候補（実績あり） ＞ コード化候補 ＞ 書き換え候補」。
 // 上限を超えた分は起票せず翌週へ繰り越す（破棄しない）。
@@ -73,7 +67,7 @@ function applyFilingCap(candidates, cap) {
   const ordered = fileable.slice().sort((a, b) => filingPriority(a) - filingPriority(b));
   return { fileNow: ordered.slice(0, cap), carriedOver: ordered.slice(cap) };
 }
-// === FILING-CAP-GATE-END ===
+// === CODIFY-GATES-END ===
 
 const stageSchema = {
   type: "object",
