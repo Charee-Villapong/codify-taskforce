@@ -536,7 +536,7 @@ const judge = await runStage("judge-candidates", "4段目：判定", (last, atte
     "- 第2軸「リスク」: guard（要ガード）の有無。不可逆操作（送信・削除・支払い等）や情報漏洩に触れる候補は guard を true にする（可否とは別軸）。",
     "- 相反候補（kind: \"contradiction\"）は、正の判断（どちらを正とするか）が要る場合は needs_user にする。",
     "- 書き換え候補（kind: \"rewrite\"）はコード化チェックリストではなく「わかりにくさの判定基準」で判定する。基準に当たり、本人の原則に従う書き換えで解消できる場合は verdict を \"rewritable\"（書き換え可）とする（コード化可否の物差しで \"not_codable\" にしない）。書き換えでも解消できない場合は \"not_codable\"、本人の判断が要る場合は \"needs_user\" とする（書き換えの実施は開発段の仕事で、ここでは判定だけ）。",
-    "- 同じセクションに複数の候補（例: コード化候補と書き換え候補）が来ている場合は、それぞれを独立に判定して返してよい。同一セクションへの判定の衝突の解消はハーネスのコード側が行う（上書きはしない）。",
+    "- 同じセクションに複数の候補（例: コード化候補と書き換え候補）が来ている場合は、それぞれを独立に判定して返してよい。同一セクションへの判定の衝突の解消はハーネスのコード側が行う（上書きはしない）。 繰り越し分として再提示された候補（前週に上限で繰り越された未起票の「可」「書き換え可」）も、新規候補と同じくチェックリストで改めて判定する（前週の判定をそのまま引き継がない）。再判定で「可」「書き換え可」になれば起票上限ゲートの対象になる。",
     "- judged に1件ずつ入れる: kind、repo、path、heading、section_hash、title、verdict、guard、has_precedent、reason_code（needs_user の理由を短い符号で。例: \"checklist-incomplete\"、\"needs-decision\"、\"unclear-rule\"）、checklist（6項目。分かる範囲で埋める）。",
     "- 候補が0件でも成功とする。",
     "- 3回再試行しても判定自体ができなかった場合は status を failed にする。",
@@ -631,8 +631,9 @@ if (fileNow.length > 0) {
 // 記録段: queue-add → state-commit の順に行い、state-commit を最後にすることで、
 // 途中で失敗したら状態を進めず、次週に同じ差分を再走査する。
 // 繰り越しがあるリポジトリは last_success_commit を進めない（翌週に同じ差分を
-// 再走査し、繰り越し分を優先的に起票する。判定済みは previously_judged で
-// 再提示しない）。
+// 再走査し、繰り越し分を優先的に起票する。判定済みのうち起票済み・不可・
+// 要確認は previously_judged で再提示しない（未起票の「可」「書き換え可」は
+// 繰り越しとして再提示する）。
 const issueNumbers = {};
 for (const f of filed) {
   if (f.key) issueNumbers[f.key] = f.number;
