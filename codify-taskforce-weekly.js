@@ -149,7 +149,7 @@ const candidateShape = {
     summary: { type: "string" },
     has_precedent: { type: "boolean" },
     checklist: {
-      type: "object",
+      type: ["object", "null"],
       properties: {
         input_source: { type: "string" },
         output: { type: "string" },
@@ -194,7 +194,7 @@ const extractSchema = {
               properties: {
                 heading: { type: "string" },
                 section_hash: { type: "string" },
-                previously_judged: { type: "object" }
+                previously_judged: { type: ["object", "null"] }
               },
               required: ["heading", "section_hash"]
             }
@@ -269,9 +269,9 @@ const judgeSchema = {
           verdict: { type: "string", enum: ["codable", "rewritable", "not_codable", "needs_user"] },
           guard: { type: "boolean" },
           has_precedent: { type: "boolean" },
-          reason_code: { type: "string" },
+          reason_code: { type: ["string", "null"] },
           checklist: {
-            type: "object",
+            type: ["object", "null"],
             properties: {
               input_source: { type: "string" },
               output: { type: "string" },
