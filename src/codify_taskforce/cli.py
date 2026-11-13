@@ -184,6 +184,24 @@ def cmd_scan_text(config: Config, args: argparse.Namespace) -> dict:
 # ----------------------------------------------------------------------
 
 
+def _judged_rank(record: dict) -> int:
+    """同一セクションの複数判定のマージ優先順位（小さいほど優先）。
+
+    起票済み（issue_number あり）> 可・未起票（codable / rewritable
+    かつ issue_number なし）> 要・本人確認（needs_user）> 不可
+    （not_codable）。「書き換え可・未起票」はコード化可・未起票と
+    同じ扱い（どちらも起票対象の未起票のため）。未起票の「可」が
+    「不可」に上書きで消え、次週の抽出から漏れるのを防ぐ。
+    """
+    if record.get("issue_number") is not None:
+        return 0
+    if record["verdict_code"] in ("codable", "rewritable"):
+        return 1
+    if record["verdict_code"] == "needs_user":
+        return 2
+    return 3
+
+
 def cmd_state_commit(config: Config, args: argparse.Namespace) -> dict:
     data = _read_json_file(args.file)
     if not isinstance(data, dict):
@@ -196,7 +214,6 @@ def cmd_state_commit(config: Config, args: argparse.Namespace) -> dict:
         raise CliError(
             "state-commit の advance_commits はオブジェクトである必要があります。"
         )
-    seen_verdicts: dict[tuple, str] = {}
     for record in judged:
         if not isinstance(record, dict):
             raise CliError("judged の各要素はオブジェクトである必要があります。")
@@ -216,26 +233,26 @@ def cmd_state_commit(config: Config, args: argparse.Namespace) -> dict:
                 f"{kind!r} "
                 f"（許容値: {', '.join(state_mod.KIND_CODES)}）"
             )
-        # 同一セクションに矛盾する2判定が入っていたら、上書きで片方を
-        # 黙って消さず、バッチ全体を拒否する（衝突の解消はワークフ
-        # ロー側のゲートが行い、確認待ちキューへ回す）。
+    for repo, commit in advance_commits.items():
+        if not isinstance(commit, str) or not commit:
+            raise CliError(f"advance_commits の値が不正です: {repo!r}")
+
+    # 同一セクションに複数の判定が入っていたら、優先順位で1件に
+    # マージする（上書きで片方を黙って消さない）。同順なら先勝ち。
+    # このマージは同じ入力バッチ内に限る。別バッチ（別週）の新しい
+    # 判定が来た場合は upsert_judged が最新の判定で置き換える。
+    merged: dict[tuple, dict] = {}
+    for record in judged:
         key = (
             record["repo"],
             record["path"],
             record["heading"],
             record["section_hash"],
         )
-        previous = seen_verdicts.get(key)
-        if previous is not None and previous != record["verdict_code"]:
-            raise CliError(
-                "同一セクションに矛盾する判定が含まれています: "
-                f"{record['path']} > {record['heading']} "
-                f"（{previous} と {record['verdict_code']}）"
-            )
-        seen_verdicts[key] = record["verdict_code"]
-    for repo, commit in advance_commits.items():
-        if not isinstance(commit, str) or not commit:
-            raise CliError(f"advance_commits の値が不正です: {repo!r}")
+        current = merged.get(key)
+        if current is None or _judged_rank(record) < _judged_rank(current):
+            merged[key] = record
+    judged = list(merged.values())
 
     state = state_mod.load_state_strict(config.state_file)
     for record in judged:

@@ -8,9 +8,10 @@ Issue #30 初回実行（2026-11-13）で見つかった設計と指示のズレ
   （codable / rewrite / contradiction）を残す。
 - ズレ2: 同一セクションに codable と not_codable の2判定が入り、
   state-commit の上書きで codable 側が黙って消えた。同一バッチ内に
-  同一キーで異なる verdict_code があれば、state-commit は全体を
-  拒否し、状態を変更しない（衝突の解消はワークフロー側のゲートが
-  行い、確認待ちキューへ回す）。
+  同一キーで複数の判定があれば、state-commit は優先順位
+  （起票済み > 可・未起票 > 要・本人確認 > 不可）で1件にマージ
+  して記録する（未起票の「可」が「不可」に消されるのを防ぐ）。
+  ワークフロー側のゲートは上流で衝突を「要・本人確認」へ畳む。
 """
 
 from __future__ import annotations
@@ -120,36 +121,69 @@ def test_unknown_kind_is_rejected_and_state_unchanged(harness):
 
 
 # ----------------------------------------------------------------------
-# ズレ2: 同一キーへの矛盾する判定はバッチ全体を拒否する
+# ズレ2: 同一キーへの複数判定は優先順位で1件にマージする
 # ----------------------------------------------------------------------
 
 
-def test_conflicting_duplicate_verdicts_are_rejected(harness):
-    """初回実行の再現: 同一セクションに codable と not_codable。"""
+def test_conflicting_duplicates_keep_codable_unfiled(harness):
+    """初回実行の再現: 同一セクションに codable と not_codable。
+
+    後勝ちの上書きでは codable 側が消えた。マージ優先順位により
+    未起票の「可」が残ること（「不可」に消されないこと）。
+    """
     repo, base_commit = _repo_with_section(harness)
     section = harness.section("rules/doc.md", "Doc > Rule")
     harness.seed_state_at_head(repo)
-    before = harness.state_file.read_bytes()
 
-    results = harness.write_json_input(
-        "conflicting.json",
-        {
-            "judged": [
-                _record(section, str(repo), verdict_code="codable", kind="codable"),
-                _record(
-                    section,
-                    str(repo),
-                    verdict_code="not_codable",
-                    kind="rewrite",
-                ),
-            ],
-            "advance_commits": {str(repo): base_commit},
-        },
+    payload = harness.state_commit(
+        [
+            _record(section, str(repo), verdict_code="codable", kind="codable"),
+            _record(
+                section,
+                str(repo),
+                verdict_code="not_codable",
+                kind="rewrite",
+            ),
+        ],
+        {str(repo): base_commit},
     )
-    result = harness.run_raw("state-commit", "--file", str(results))
-    assert result.returncode != 0
-    # 状態は一切変わらない（前進もしない）。
-    assert harness.state_file.read_bytes() == before
+    assert payload["ok"] is True
+    assert payload["judged_count"] == 1
+
+    state = json.loads(harness.state_file.read_text(encoding="utf-8"))
+    records = [r for r in state["judged"] if r["heading"] == "Doc > Rule"]
+    assert len(records) == 1
+    assert records[0]["verdict_code"] == "codable"
+    assert records[0]["issue_number"] is None
+
+
+def test_filed_record_beats_codable_unfiled(harness):
+    """起票済みは未起票の「可」より優先して残る（入力順によらない）。"""
+    repo, base_commit = _repo_with_section(harness)
+    section = harness.section("rules/doc.md", "Doc > Rule")
+    harness.seed_state_at_head(repo)
+
+    payload = harness.state_commit(
+        [
+            _record(section, str(repo), verdict_code="codable", kind="codable"),
+            _record(
+                section,
+                str(repo),
+                verdict_code="codable",
+                kind="codable",
+                issue_number=101,
+            ),
+        ],
+        {str(repo): base_commit},
+    )
+    assert payload["ok"] is True
+    assert payload["judged_count"] == 1
+
+    state = json.loads(harness.state_file.read_text(encoding="utf-8"))
+    records = [r for r in state["judged"] if r["heading"] == "Doc > Rule"]
+    assert len(records) == 1
+    assert records[0]["verdict_code"] == "codable"
+    assert records[0]["issue_number"] == 101
 
 
 def test_same_verdict_duplicates_collapse_to_one_record(harness):
