@@ -69,17 +69,10 @@ def cmd_extract(config: Config, args: argparse.Namespace) -> dict:
     force_full = bool(getattr(args, "full", False))
     mode = "full" if (force_full or not had_valid_state) else "diff"
 
-    # diff モードでは、コミット済み差分に含まれるファイルに加え、
-    # 判定記録を持つファイルも含める。判定済みセクションの
-    # previously_judged を呼び出し側が確認できるようにするためで、
-    # 再提示・再起票の抑制は previously_judged（ハッシュ一致）で行う。
-    # 判定記録を持たないファイルは差分に含まれるものだけが対象。
-    judged_paths = {
-        (record.get("repo"), record.get("path"))
-        for record in state.get("judged", [])
-        if isinstance(record, dict)
-    }
-
+    # diff モードでは、コミット済み差分に含まれる allowlist ファイルだけ
+    # を対象にする。判定記録の有無は範囲に影響しない。
+    # 再提示・再起票の抑制は previously_judged（ハッシュ一致）で行い、
+    # 変更されたファイルが差分に入ればその中で働く。
     selected: list[tuple[str, str, str]] = []
     if mode == "full":
         selected = _allowlisted_files(config)
@@ -110,14 +103,7 @@ def cmd_extract(config: Config, args: argparse.Namespace) -> dict:
                 continue
             changed_set = set(changed)
             for rel_path in entry.files:
-                if (
-                    rel_path not in changed_set
-                    and (
-                        entry.repo,
-                        rel_path,
-                    )
-                    not in judged_paths
-                ):
+                if rel_path not in changed_set:
                     continue
                 if is_denylisted(rel_path, config.denylist):
                     continue

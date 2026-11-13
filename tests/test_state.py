@@ -266,7 +266,17 @@ def test_state_file_records_the_advanced_commit_behaviourally(harness):
 def test_state_file_is_complete_valid_json_after_every_commit(harness):
     repo, base_commit = _repo_with_two_sections(harness)
     for index in range(3):
-        keep = harness.section("rules/doc.md", "Doc > Keep")
+        # セクションの取り直しは --full で行う。diff モードは新規コミット
+        # が無ければ判定記録のあるファイルも出さない（Issue #30 決定
+        # 2026-11-13）ため、ここでは全件走査で取り直す。
+        full = harness.run_json("extract", "--full")
+        keep = next(
+            s
+            for e in full["files"]
+            if e["path"] == "rules/doc.md"
+            for s in e["sections"]
+            if s["heading"] == "Doc > Keep"
+        )
         harness.state_commit(
             [_judged(keep, repo=str(repo), issue_number=100 + index)],
             {str(repo): base_commit},
