@@ -28,6 +28,36 @@ def test_extract_emits_single_json_object_on_stdout(harness, simple_repo):
     assert isinstance(payload["files"], list)
 
 
+def test_extract_emits_limits_from_config(harness, simple_repo):
+    """``extract`` の出力に設定ファイルの上限値が limits として入る。
+
+    週次ワークフローは起票上限をこの値から読む（フォールバック無し）。
+    """
+    payload = harness.extract()
+    assert payload["limits"] == {
+        "weekly_issue_cap": 3,
+        "daily_presentation_cap": 2,
+    }
+
+
+def test_extract_limits_follow_custom_config_values(harness):
+    repo = harness.init_repo()
+    harness.write_file(repo, "rules/a.md", "# Alpha\n\nalpha\n")
+    harness.commit_all(repo, "v1")
+    harness.config_for_repo(
+        repo,
+        ["rules/a.md"],
+        weekly_issue_cap=5,
+        daily_presentation_cap=4,
+    )
+
+    payload = harness.extract()
+    assert payload["limits"] == {
+        "weekly_issue_cap": 5,
+        "daily_presentation_cap": 4,
+    }
+
+
 def test_hash_files_emits_json_object_on_stdout(harness, simple_repo):
     payload = harness.run_json("hash-files")
     assert isinstance(payload["files"], list)

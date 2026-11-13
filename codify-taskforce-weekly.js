@@ -161,8 +161,14 @@ const extractSchema = {
         required: ["repo", "path", "sections"]
       }
     },
-    weekly_issue_cap: { type: "number" },
-    daily_presentation_cap: { type: "number" },
+    limits: {
+      type: "object",
+      properties: {
+        weekly_issue_cap: { type: "number" },
+        daily_presentation_cap: { type: "number" }
+      },
+      required: ["weekly_issue_cap", "daily_presentation_cap"]
+    },
     trial_weeks: { type: "number" },
     checklist_version: { type: "string" },
     org_repo: { type: "string" }
@@ -388,7 +394,7 @@ const extract = await runStage("extract-diff", "1段目：差分抽出", (last, 
     "あなたは「コード化タスクフォースの差分抽出」専任のエージェントです。週次ハーネスは7段（差分抽出→候補抽出→相反点検→判定→秘匿チェック→起票→記録）で、あなたは1段目です。役割は1つだけ: CLI の extract を実行し、今回の走査対象セクションを構造化して返すこと。対象mdへの書き込みは絶対にしないでください。",
     commonRules,
     "手順:",
-    "1. 設定ファイル（" + CONFIG_PATH + "）を読み、weekly_issue_cap、daily_presentation_cap、trial_weeks、checklist_version、org_repo を結果に含める。",
+    "1. CLI の extract 結果の limits に設定ファイルの上限値（weekly_issue_cap、daily_presentation_cap）が入る。その値を結果の limits に入れる。trial_weeks、checklist_version、org_repo は設定ファイル（" + CONFIG_PATH + "）を読んで結果に含める。",
     "2. CLI を実行する: " + (firstRun ? "初回のため `extract --full`（全件走査）" : "`extract`（前回成功時コミットからのコミット済み差分）") + "。未コミットの変更は対象にならない。",
     "3. 結果の files をそのまま返す（repo・path・sections の heading・section_hash・previously_judged）。セクション本文は結果に含めないこと（原文の引用・転載をしない）。",
     "4. 判定済み（previously_judged がある）セクションは候補抽出の対象外だが、files には含めたまま返す（判定段が再提示の抑制を確認するため）。",
@@ -405,7 +411,18 @@ if (extract.status !== "success") {
   );
 }
 
-const weeklyIssueCap = typeof extract.weekly_issue_cap === "number" ? extract.weekly_issue_cap : 3;
+// 起票上限は CLI の extract 結果の limits から読む。値が取れなければ
+// 無言で既定値にせず、この段を failed として扱う。
+const limits = extract.limits || {};
+const weeklyIssueCap = limits.weekly_issue_cap;
+if (typeof weeklyIssueCap !== "number" || typeof limits.daily_presentation_cap !== "number") {
+  const failedExtract = { status: "failed", summary: "extract 結果に limits（weekly_issue_cap / daily_presentation_cap）が無いため起票上限を決められない" };
+  log("extract limits missing", { summary: failedExtract.summary });
+  return earlyReturn(
+    { extract: stageSummary(failedExtract), candidates: { status: "skipped", summary: "前段の失敗のため未実施" }, contradictions: { status: "skipped", summary: "前段の失敗のため未実施" }, judge: { status: "skipped", summary: "前段の失敗のため未実施" }, secrecy: { status: "skipped", summary: "前段の失敗のため未実施" }, file: { status: "skipped", summary: "前段の失敗のため未実施" }, record: { status: "skipped", summary: "前段の失敗のため未実施" } },
+    [], 0, extract.reports || [], "差分抽出"
+  );
+}
 const trialWeeks = typeof extract.trial_weeks === "number" ? extract.trial_weeks : 0;
 const trialMode = trialWeeks > 0;
 

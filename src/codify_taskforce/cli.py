@@ -140,7 +140,14 @@ def cmd_extract(config: Config, args: argparse.Namespace) -> dict:
             }
         )
 
-    payload: dict = {"mode": mode, "files": files}
+    payload: dict = {
+        "mode": mode,
+        "files": files,
+        "limits": {
+            "weekly_issue_cap": config.weekly_issue_cap,
+            "daily_presentation_cap": config.daily_presentation_cap,
+        },
+    }
     if warning:
         payload["state_warning"] = warning
     return payload
