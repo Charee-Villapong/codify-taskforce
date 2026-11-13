@@ -28,5 +28,5 @@
   "queue_file": "/path/to/codify-taskforce-data/queue.json",
   "state_file": "/path/to/codify-taskforce-data/state.json",
   "trial_weeks": 0,
-  "weekly_issue_cap": 3
+  "weekly_issue_cap": null
 }

@@ -98,11 +98,13 @@ function applySecrecyGate(candidates, scanResults) {
     return copy;
   });
 }
-// 起票上限ゲート。文章のルールではなく、この関数の判定が正。
-// 起票対象は「可」と「書き換え可」で、週あたり上限は設定値
-// （weekly_issue_cap）の1つの枠を共有する。
+// 起票振り分けゲート。文章のルールではなく、この関数の判定が正。
+// 起票対象は「可」と「書き換え可」。週あたり起票上限は本人の決定で
+// 撤廃済みであり、設定値（weekly_issue_cap）が null の場合は
+// 全件を起票対象とする（上限で止めない）。数値が設定された場合のみ、
+// その件数を上限として超過分を翌週へ繰り越す（破棄しない）。
 // 優先順は「相反 ＞ コード化候補（実績あり） ＞ コード化候補 ＞ 書き換え候補」。
-// 上限を超えた分は起票せず翌週へ繰り越す（破棄しない）。
+// 上限の有無にかかわらず、消化の順番として担保する。
 function filingPriority(candidate) {
   if (candidate.kind === "contradiction") return 0;
   if (candidate.verdict === "rewritable") return 3;
@@ -113,6 +115,9 @@ function filingPriority(candidate) {
 function applyFilingCap(candidates, cap) {
   const fileable = (candidates || []).filter((c) => c.verdict === "codable" || c.verdict === "rewritable");
   const ordered = fileable.slice().sort((a, b) => filingPriority(a) - filingPriority(b));
+  if (cap === null || cap === undefined) {
+    return { fileNow: ordered, carriedOver: [] };
+  }
   return { fileNow: ordered.slice(0, cap), carriedOver: ordered.slice(cap) };
 }
 // === CODIFY-GATES-END ===
@@ -206,7 +211,7 @@ const extractSchema = {
     limits: {
       type: "object",
       properties: {
-        weekly_issue_cap: { type: "number" },
+        weekly_issue_cap: { type: ["number", "null"] },
         daily_presentation_cap: { type: "number" }
       },
       required: ["weekly_issue_cap", "daily_presentation_cap"]
@@ -436,7 +441,7 @@ const extract = await runStage("extract-diff", "1段目：差分抽出", (last, 
     "あなたは「コード化タスクフォースの差分抽出」専任のエージェントです。週次ハーネスは7段（差分抽出→候補抽出→相反点検→判定→秘匿チェック→起票→記録）で、あなたは1段目です。役割は1つだけ: CLI の extract を実行し、今回の走査対象セクションを構造化して返すこと。対象mdへの書き込みは絶対にしないでください。",
     commonRules,
     "手順:",
-    "1. CLI の extract 結果の limits に設定ファイルの上限値（weekly_issue_cap、daily_presentation_cap）が入る。その値を結果の limits に入れる。trial_weeks、checklist_version、org_repo は設定ファイル（" + CONFIG_PATH + "）を読んで結果に含める。",
+    "1. CLI の extract 結果の limits に設定ファイルの値（weekly_issue_cap は null の場合は null のまま、daily_presentation_cap）が入る。その値を結果の limits に入れる。trial_weeks、checklist_version、org_repo は設定ファイル（" + CONFIG_PATH + "）を読んで結果に含める。",
     "2. CLI を実行する: " + (firstRun ? "初回のため `extract --full`（全件走査）" : "`extract`（前回成功時コミットからのコミット済み差分）") + "。未コミットの変更は対象にならない。",
     "3. 結果の files をそのまま返す（repo・path・sections の heading・section_hash・previously_judged）。セクション本文は結果に含めないこと（原文の引用・転載をしない）。",
     "4. 判定済み（previously_judged がある）セクションも files には含めたまま返す。候補抽出の対象外になるのは起票済み・不可・要確認のものだけで、未起票の「可」「書き換え可」は繰り越しとして候補抽出段が再提示する（判定段が再提示の抑制を確認するため）。",
@@ -453,12 +458,13 @@ if (extract.status !== "success") {
   );
 }
 
-// 起票上限は CLI の extract 結果の limits から読む。値が取れなければ
-// 無言で既定値にせず、この段を failed として扱う。
+// 起票上限は CLI の extract 結果の limits から読む。上限は撤廃済みで
+// weekly_issue_cap が null（無制限）であることは正常値として扱う。
+// 値自体が取れなければ無言で既定値にせず、この段を failed として扱う。
 const limits = extract.limits || {};
 const weeklyIssueCap = limits.weekly_issue_cap;
-if (typeof weeklyIssueCap !== "number" || typeof limits.daily_presentation_cap !== "number") {
-  const failedExtract = { status: "failed", summary: "extract 結果に limits（weekly_issue_cap / daily_presentation_cap）が無いため起票上限を決められない" };
+if ((typeof weeklyIssueCap !== "number" && weeklyIssueCap !== null) || typeof limits.daily_presentation_cap !== "number") {
+  const failedExtract = { status: "failed", summary: "extract 結果に limits（weekly_issue_cap / daily_presentation_cap）が無いため起票範囲を決められない" };
   log("extract limits missing", { summary: failedExtract.summary });
   return earlyReturn(
     { extract: stageSummary(failedExtract), candidates: { status: "skipped", summary: "前段の失敗のため未実施" }, contradictions: { status: "skipped", summary: "前段の失敗のため未実施" }, judge: { status: "skipped", summary: "前段の失敗のため未実施" }, secrecy: { status: "skipped", summary: "前段の失敗のため未実施" }, file: { status: "skipped", summary: "前段の失敗のため未実施" }, record: { status: "skipped", summary: "前段の失敗のため未実施" } },
@@ -477,7 +483,7 @@ const candidates = await runStage("extract-candidates", "2段目：候補抽出�
     JSON.stringify(extract.files || []),
     "判定基準文書: " + CRITERIA_PATH + "（docs/CRITERIA.md）。",
     "抽出のルール:",
-    "- previously_judged があるセクションは、原則として候補にしない（判定済みは実質変更なしに再提示しない）。ただし例外として、previously_judged の verdict_code が \"codable\" または \"rewritable\" で issue_number が無い（未起票＝前回までに上限で繰り越された）セクションは、繰り越し分として同じ kind で候補に再提示する（起票済み・not_codable・needs_user の再提示はしない）。",
+    "- previously_judged があるセクションは、原則として候補にしない（判定済みは実質変更なしに再提示しない）。ただし例外として、previously_judged の verdict_code が \"codable\" または \"rewritable\" で issue_number が無い（未起票＝前回までに起票されなかった）セクションは、繰り越し分として同じ kind で候補に再提示する（起票済み・not_codable・needs_user の再提示はしない）。",
     "- コード化候補（kind: \"codable\"）: チェックリストの必須項目（入力の出所／出力／合否条件／失敗時の動作／正常系・異常系テスト例各1件）が見込めるルール。必須項目は分かる範囲で埋め、分からなければ空文字にする（空欄のまま「可」にしないのは判定段とハーネスのゲートの仕事）。",
     "- 書き換え候補（kind: \"rewrite\"）: docs/CRITERIA.md の「わかりにくさの判定基準」に当たる書き方のルール（曖昧な数量詞が本質に含まれる／長い・入れ子・二重否定の文／読む人依存の解釈が残る／条件と例外が分離していない）。書き換え自体はここでは行わない（開発段の仕事）。",
     "- 候補は candidates に1件ずつ入れる: kind、repo、path、heading、section_hash、title（短い件名）、summary（変数名・構造での要約。具体値は書かない）、has_precedent（過去に実際に漏れた実績のあるルールなら true）、checklist（6項目。コード化候補のみ）。",
@@ -536,7 +542,7 @@ const judge = await runStage("judge-candidates", "4段目：判定", (last, atte
     "- 第2軸「リスク」: guard（要ガード）の有無。不可逆操作（送信・削除・支払い等）や情報漏洩に触れる候補は guard を true にする（可否とは別軸）。",
     "- 相反候補（kind: \"contradiction\"）は、正の判断（どちらを正とするか）が要る場合は needs_user にする。",
     "- 書き換え候補（kind: \"rewrite\"）はコード化チェックリストではなく「わかりにくさの判定基準」で判定する。基準に当たり、本人の原則に従う書き換えで解消できる場合は verdict を \"rewritable\"（書き換え可）とする（コード化可否の物差しで \"not_codable\" にしない）。書き換えでも解消できない場合は \"not_codable\"、本人の判断が要る場合は \"needs_user\" とする（書き換えの実施は開発段の仕事で、ここでは判定だけ）。",
-    "- 同じセクションに複数の候補（例: コード化候補と書き換え候補）が来ている場合は、それぞれを独立に判定して返してよい。同一セクションへの判定の衝突の解消はハーネスのコード側が行う（上書きはしない）。 繰り越し分として再提示された候補（前週に上限で繰り越された未起票の「可」「書き換え可」）も、新規候補と同じくチェックリストで改めて判定する（前週の判定をそのまま引き継がない）。再判定で「可」「書き換え可」になれば起票上限ゲートの対象になる。",
+    "- 同じセクションに複数の候補（例: コード化候補と書き換え候補）が来ている場合は、それぞれを独立に判定して返してよい。同一セクションへの判定の衝突の解消はハーネスのコード側が行う（上書きはしない）。 繰り越し分として再提示された候補（前回までに起票されなかった未起票の「可」「書き換え可」）も、新規候補と同じくチェックリストで改めて判定する（前回の判定をそのまま引き継がない）。再判定で「可」「書き換え可」になれば起票振り分けゲートの対象になる。",
     "- judged に1件ずつ入れる: kind、repo、path、heading、section_hash、title、verdict、guard、has_precedent、reason_code（needs_user の理由を短い符号で。例: \"checklist-incomplete\"、\"needs-decision\"、\"unclear-rule\"）、checklist（6項目。分かる範囲で埋める）。",
     "- 候補が0件でも成功とする。",
     "- 3回再試行しても判定自体ができなかった場合は status を failed にする。",
@@ -590,11 +596,11 @@ if (secrecy.status !== "success") {
 const finalJudged = applySecrecyGate(gatedJudged, secrecy.scans || []);
 log("secrecy gate applied", { codable: finalJudged.filter((c) => c.verdict === "codable").length, needsUser: finalJudged.filter((c) => c.verdict === "needs_user").length });
 
-// 起票上限ゲート（コード側）。上限を超えた分は翌週へ繰り越す（破棄しない）。
+// 起票振り分けゲート（コード側）。上限が設定された場合のみ、超えた分を翌週へ繰り越す（破棄しない）。
 const filingSplit = applyFilingCap(finalJudged, weeklyIssueCap);
 const fileNow = trialMode ? [] : filingSplit.fileNow;
 const carriedOver = trialMode ? filingSplit.fileNow.concat(filingSplit.carriedOver) : filingSplit.carriedOver;
-log("filing cap applied", { fileNow: fileNow.length, carriedOver: carriedOver.length, trialMode: trialMode });
+log("filing split applied", { fileNow: fileNow.length, carriedOver: carriedOver.length, trialMode: trialMode });
 
 let filed = [];
 let fileStage = { status: "skipped", summary: trialMode ? "試行期間（提示のみ）のため起票しない" : "起票対象0件のため未実施" };
@@ -604,7 +610,7 @@ if (fileNow.length > 0) {
     [
       "あなたは「コード化タスクフォースの起票」専任のエージェントです。週次ハーネスの6段目です。役割は1つだけ: 起票対象の候補を " + ORG_REPO + " へ Issue として起票すること。gh は " + GH + " を使う。対象mdへの書き込みは絶対にしないでください。",
       commonRules,
-      "起票対象の候補（優先順・上限はハーネスのコード側で決め済み。この全件を起票する）:",
+      "起票対象の候補（優先順はハーネスのコード側で決め済み。この全件を起票する）:",
       JSON.stringify(fileNow),
       "起票のルール:",
       "- 起票前に既存 Issue（閉じた分を含む）と #19 の候補・台帳行を照合し、重なれば新規起票せず既存側へリンクする（その候補は filed に入れず、summary に「既存 Issue #N へリンク」と書く）。",
@@ -663,7 +669,7 @@ const record = await runStage("record-results", "7段目：記録", (last, attem
     JSON.stringify(finalJudged),
     "起票済みの Issue（候補キー→Issue番号）:",
     JSON.stringify(issueNumbers),
-    "繰り越し分（上限超過のため今週は起票しない候補）:",
+    "繰り越し分（今週は起票しない候補）:",
     JSON.stringify(carriedOver),
     "前進させるリポジトリ（繰り越しがあるリポジトリは含まない）:",
     JSON.stringify(advanceRepos),

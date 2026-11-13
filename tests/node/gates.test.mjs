@@ -261,6 +261,37 @@ test("書き換え: 「書き換え可」は起票対象に入り、優先順は
   assert.deepEqual(carriedOver, []);
 });
 
+test("起票上限: 上限が null の場合は全件が起票対象になり繰り越しは空（上限撤廃）", () => {
+  const rewrite = candidate({
+    kind: "rewrite",
+    heading: "Rewrite",
+    verdict: "rewritable",
+  });
+  const plain = candidate({ kind: "codable", heading: "Plain" });
+  const precedent = candidate({
+    kind: "codable",
+    heading: "Precedent",
+    has_precedent: true,
+  });
+  const contradiction = candidate({
+    kind: "contradiction",
+    heading: "Contradiction",
+  });
+  const needsUser = candidate({
+    heading: "NeedsUser",
+    verdict: "needs_user",
+  });
+  const { fileNow, carriedOver } = gates.applyFilingCap(
+    [rewrite, needsUser, plain, precedent, contradiction],
+    null,
+  );
+  assert.deepEqual(
+    fileNow.map((c) => c.heading),
+    ["Contradiction", "Precedent", "Plain", "Rewrite"],
+  );
+  assert.deepEqual(carriedOver, []);
+});
+
 test("書き換え: 上限超過した「書き換え可」は繰り越しに入る（破棄しない）", () => {
   const plain = candidate({ kind: "codable", heading: "Plain" });
   const rewrite = candidate({

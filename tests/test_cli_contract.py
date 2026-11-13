@@ -40,6 +40,30 @@ def test_extract_emits_limits_from_config(harness, simple_repo):
     }
 
 
+def test_extract_limits_weekly_cap_null_means_unlimited(harness):
+    """``weekly_issue_cap`` が null の設定では limits にも null が入る。
+
+    本人の決定で週あたり起票上限は撤廃された。設定変数は残すが、
+    null の場合は無制限としてワークフローへそのまま渡る（数値への
+    フォールバックはしない）。
+    """
+    repo = harness.init_repo()
+    harness.write_file(repo, "rules/a.md", "# Alpha\n\nalpha\n")
+    harness.commit_all(repo, "v1")
+    harness.config_for_repo(
+        repo,
+        ["rules/a.md"],
+        weekly_issue_cap=None,
+        daily_presentation_cap=4,
+    )
+
+    payload = harness.extract()
+    assert payload["limits"] == {
+        "weekly_issue_cap": None,
+        "daily_presentation_cap": 4,
+    }
+
+
 def test_extract_limits_follow_custom_config_values(harness):
     repo = harness.init_repo()
     harness.write_file(repo, "rules/a.md", "# Alpha\n\nalpha\n")

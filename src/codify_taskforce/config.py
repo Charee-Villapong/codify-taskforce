@@ -36,7 +36,7 @@ class Config:
     denylist: list[str]
     state_file: str
     queue_file: str
-    weekly_issue_cap: int
+    weekly_issue_cap: int | None
     daily_presentation_cap: int
     checklist_version: str
     org_repo: str
@@ -95,7 +95,9 @@ def load_config(path: str | Path | None = None) -> Config:
         denylist=[str(item) for item in denylist],
         state_file=str(raw["state_file"]),
         queue_file=str(raw["queue_file"]),
-        weekly_issue_cap=int(raw["weekly_issue_cap"]),
+        weekly_issue_cap=(
+            None if raw["weekly_issue_cap"] is None else int(raw["weekly_issue_cap"])
+        ),
         daily_presentation_cap=int(raw["daily_presentation_cap"]),
         checklist_version=str(raw["checklist_version"]),
         org_repo=str(raw["org_repo"]),
