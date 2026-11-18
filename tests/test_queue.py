@@ -15,6 +15,8 @@ Acceptance criteria covered:
 
 from __future__ import annotations
 
+import json
+
 from conftest import queue_item
 
 DAY = "2026-11-13"
@@ -219,3 +221,28 @@ def test_resolved_item_leaves_the_presentation_targets(harness, simple_repo):
     assert listing["total_pending"] == 1
     # Resolved items do not come back on later days either.
     assert _listed_keys(harness, NEXT_DAY) == ["k2"]
+
+
+# ----------------------------------------------------------------------
+# queue-list: date validation
+# ----------------------------------------------------------------------
+
+
+def test_list_with_a_malformed_date_fails(harness, simple_repo):
+    # Dates are parsed as dates, not compared as strings: a value that
+    # is not an ISO date must be an error, never a silent misjudgement.
+    _add(harness, [queue_item("k1", "2026-11-10T09:00:00")])
+    result = harness.run_raw("queue-list", "--date", "13/11/2026")
+    assert result.returncode != 0
+
+
+def test_list_with_a_malformed_last_presented_fails(harness, simple_repo):
+    # A stored last_presented that is not a date must also be an error.
+    _add(harness, [queue_item("k1", "2026-11-10T09:00:00")])
+    queue = json.loads(harness.queue_file.read_text(encoding="utf-8"))
+    queue["items"][0]["last_presented"] = "yesterday"
+    harness.queue_file.write_text(
+        json.dumps(queue, ensure_ascii=False), encoding="utf-8"
+    )
+    result = harness.run_raw("queue-list", "--date", DAY)
+    assert result.returncode != 0

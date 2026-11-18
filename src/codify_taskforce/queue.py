@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime
 import json
 import os
 import tempfile
@@ -97,19 +98,35 @@ def add_items(queue: dict, items: list[dict]) -> tuple[int, int]:
     return added, skipped
 
 
+def _parse_date(value: object, field: str) -> datetime.date:
+    """ISO形式（YYYY-MM-DD）の日付文字列を date に変換する。
+
+    文字列として比較せず、必ず日付として解釈する。形式が不正な値は
+    静かに誤判定せず QueueError にする。
+    """
+    try:
+        return datetime.date.fromisoformat(str(value))
+    except ValueError as exc:
+        raise QueueError(f"{field} の日付形式が不正です: {value!r}") from exc
+
+
 def list_presentable(queue: dict, date: str, cap: int) -> tuple[list[dict], int]:
     """提示対象を created の古い順に cap 件まで返す。total_pending も返す。
 
     提示対象 = status が pending かつ last_presented が null か date より前。
+    日付の比較は date・last_presented を日付として解釈して行い、
+    どちらかの形式が不正なら QueueError。
     total_pending は pending の全件数（提示対象に限らない）。
     """
+    target = _parse_date(date, "date")
     pending = [
         item for item in queue.get("items", []) if item.get("status") == "pending"
     ]
     eligible = [
         item
         for item in pending
-        if item.get("last_presented") is None or str(item.get("last_presented")) < date
+        if item.get("last_presented") is None
+        or _parse_date(item.get("last_presented"), "last_presented") < target
     ]
     eligible.sort(key=lambda item: str(item.get("created") or ""))
     return eligible[:cap], len(pending)
