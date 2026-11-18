@@ -323,6 +323,17 @@ const secrecySchema = {
         },
         required: ["key", "hit"]
       }
+    },
+    bodies: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          key: { type: "string" },
+          body: { type: "string" }
+        },
+        required: ["key", "body"]
+      }
     }
   },
   required: ["status", "summary", "reports"]
@@ -580,7 +591,7 @@ const secrecy = await runStage("check-secrecy", "5段目：秘匿チェック", 
     "手順:",
     "1. verdict が codable または rewritable の候補ごとに、Issue 本文の案を作る。原文の引用・コードブロックでの転載はしない。要約は具体値（接続先、ホスト名、固有名、数値）でなく、変数名・構造（例: 「上限チェック」）で書く。対象mdへの参照（リポジトリ内はパスと見出し）、判定理由、想定する担保の形（検証コード／ハーネスの段／カウンタ等）を書く。書き換え候補の本文案には、わかりにくさの判定基準のどれに当たるかと、書き換えの原則（シンプルに・短く・平易に、意味の保存）に従う旨を書く。",
     "2. 本文の案を1候補1ファイルの一時ファイルに書き（ワークフロー作業ディレクトリ配下）、CLI `scan-text --file <一時ファイル>` で検査する。ローカルパターンファイルは設定の local_patterns_file を使う（CLIが設定から読む）。",
-    "3. scans に1件ずつ入れる: key（repo・path・heading・section_hash を \"|\" で結合したもの）、hit（ヒットすれば true）。verdict が codable でも rewritable でもない候補は scans に入れない。",
+    "3. scans に1件ずつ入れる: key（repo・path・heading・section_hash を \"|\" で結合したもの）、hit（ヒットすれば true）。verdict が codable でも rewritable でもない候補は scans に入れない。あわせて、検査した本文案の全文を bodies に1件ずつ入れる: key（scans と同じキー）、body（scan-text で検査した本文案そのもの）。起票段は bodies の本文をそのまま使うため、検査した本文と bodies の本文は完全に一致させること（検査後に書き換えた本文を bodies に入れない）。",
     "4. ヒットした候補の起票可否の判断はハーネスのコード側が行うので、あなたはヒット有無だけを返す（起票を止める判断はしない）。",
     "5. 3回再試行しても検査自体ができなかった場合は status を failed にする。",
     retryNote(last, attempt)
@@ -599,6 +610,14 @@ if (secrecy.status !== "success") {
 const finalJudged = applySecrecyGate(gatedJudged, secrecy.scans || []);
 log("secrecy gate applied", { codable: finalJudged.filter((c) => c.verdict === "codable").length, needsUser: finalJudged.filter((c) => c.verdict === "needs_user").length });
 
+// 秘匿チェック済み本文（候補キー→本文）。起票段へはこの本文だけを渡し、
+// 起票段が新たに作った未検査の本文では起票しない（検査した内容と
+// 起票する内容の一致を、本文の受け渡しで担保する）。
+const checkedBodies = {};
+for (const b of secrecy.bodies || []) {
+  if (b && b.key) checkedBodies[b.key] = b.body;
+}
+
 // 起票振り分けゲート（コード側）。上限が設定された場合のみ、超えた分を翌週へ繰り越す（破棄しない）。
 const filingSplit = applyFilingCap(finalJudged, weeklyIssueCap);
 const fileNow = trialMode ? [] : filingSplit.fileNow;
@@ -609,17 +628,22 @@ let filed = [];
 let fileStage = { status: "skipped", summary: trialMode ? "試行期間（提示のみ）のため起票しない" : "起票対象0件のため未実施" };
 if (fileNow.length > 0) {
   phase("file");
+  // 起票段へ渡す候補には、秘匿チェック済みの本文（issue_body）を付ける。
+  // 検査済み本文が無い候補は issue_body が null になり、起票段は起票しない。
+  const fileNowWithBodies = fileNow.map((c) =>
+    Object.assign({}, c, { issue_body: checkedBodies[candidateKey(c)] ?? null })
+  );
   const file = await runStage("file-issues", "6段目：起票", (last, attempt) =>
     [
       "あなたは「コード化タスクフォースの起票」専任のエージェントです。週次ハーネスの6段目です。役割は1つだけ: 起票対象の候補を " + ORG_REPO + " へ Issue として起票すること。gh は " + GH + " を使う。対象mdへの書き込みは絶対にしないでください。",
       commonRules,
       "起票対象の候補（優先順はハーネスのコード側で決め済み。この全件を起票する）:",
-      JSON.stringify(fileNow),
+      JSON.stringify(fileNowWithBodies),
       "起票のルール:",
       "- 起票前に既存 Issue（閉じた分を含む）と #19 の候補・台帳行を照合し、重なれば新規起票せず既存側へリンクする（その候補は filed に入れず、summary に「既存 Issue #N へリンク」と書く）。",
-      "- Issue 本文には対象mdへの参照（リポジトリ内はパスと見出し）、判定理由、想定する担保の形（検証コード／ハーネスの段／カウンタ等）を書く。原文の引用・コードブロックでの転載はしない。要約は具体値でなく変数名・構造で書く。",
+      "- Issue 本文は、各候補の issue_body（秘匿チェック段で scan-text 検査済みの本文案）をそのまま使う。新たに本文を作ったり、要約し直したり、加筆・省略したりしない。issue_body が null の候補は起票せず、summary に「秘匿チェック済み本文が無いため未起票」と書く。",
       "- タイトルは「何についてのIssueか」だけを表す形にする（状態や進捗はタイトルに入れない）。",
-      "- 起票は `gh issue create --repo " + ORG_REPO + " --title ... --body ...` で行う。本文の案は秘匿チェック済みのものを使う（秘匿チェックを受けていない本文案で起票しない）。",
+      "- 起票は `gh issue create --repo " + ORG_REPO + " --title ... --body ...` で行う。本文には issue_body をそのまま渡す。",
       "- filed に1件ずつ入れる: key（候補の repo・path・heading・section_hash を \"|\" で結合したもの）、number（Issue番号）、url、kind（codable／rewrite／contradiction）。",
       "- 起票対象が0件の場合は成功として filed を空にする。",
       "- 3回再試行しても起票自体ができなかった場合は status を failed にする（再実行時は既存 Issue との照合をやり直し、二重起票しないこと）。",
