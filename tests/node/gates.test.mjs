@@ -343,6 +343,16 @@ test("衝突: 同一キー・同一判定の重複は1件に畳む", () => {
   assert.equal(resolved[0].verdict, "codable");
 });
 
+test("衝突: 同一判定の重複でも guard と has_precedent は合算する", () => {
+  const one = candidate({ verdict: "codable", guard: true });
+  const two = candidate({ verdict: "codable", has_precedent: true });
+  const resolved = gates.resolveVerdictConflicts([one, two]);
+  assert.equal(resolved.length, 1);
+  assert.equal(resolved[0].verdict, "codable");
+  assert.equal(resolved[0].guard, true);
+  assert.equal(resolved[0].has_precedent, true);
+});
+
 test("衝突: 書き換え候補に付いた「可」は「書き換え可」に正規化する", () => {
   const mislabeled = candidate({ kind: "rewrite", verdict: "codable" });
   const [resolved] = gates.resolveVerdictConflicts([mislabeled]);

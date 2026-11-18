@@ -64,7 +64,10 @@ function resolveVerdictConflicts(candidates) {
     const group = byKey.get(key);
     const verdicts = [...new Set(group.map((c) => c.verdict))];
     if (verdicts.length === 1) {
-      resolved.push(group[0]);
+      const merged = Object.assign({}, group[0]);
+      merged.guard = group.some((c) => !!c.guard);
+      merged.has_precedent = group.some((c) => !!c.has_precedent);
+      resolved.push(merged);
       continue;
     }
     const merged = Object.assign({}, group[0]);
