@@ -22,6 +22,16 @@ GENERIC_PATTERNS: list[tuple[str, str]] = [
     ),
 ]
 
+# テキスト全体に対して検査する複数行パターン。行単位の走査では、
+# 秘密鍵ブロックのように複数行にまたがる秘密を検出できない。
+MULTILINE_PATTERNS: list[tuple[str, str]] = [
+    (
+        "private-key-block",
+        r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?"
+        r"-----END [A-Z ]*PRIVATE KEY-----",
+    ),
+]
+
 LOCAL_PATTERN_ID = "local-pattern"
 
 
@@ -69,6 +79,10 @@ def scan_text(
 
     戻り値は {"hit": bool, "matches": [{"pattern_id", "line_no"}]}。
     マッチした値そのものは出力に含めない。
+
+    通常のパターンは行単位で検査し、加えて MULTILINE_PATTERNS を
+    テキスト全体に対して検査する（複数行にまたがる秘密鍵ブロック等）。
+    複数行パターンの line_no はマッチ開始行。
     """
     target = Path(path)
     if not target.is_file():
@@ -83,4 +97,10 @@ def scan_text(
         for pattern_id, regex in compiled:
             if regex.search(line):
                 matches.append({"pattern_id": pattern_id, "line_no": line_no})
+    for pattern_id, pattern in MULTILINE_PATTERNS:
+        match = re.search(pattern, text)
+        if match:
+            line_no = text.count("\n", 0, match.start()) + 1
+            matches.append({"pattern_id": pattern_id, "line_no": line_no})
+    matches.sort(key=lambda item: item["line_no"])
     return {"hit": bool(matches), "matches": matches}

@@ -123,6 +123,47 @@ def test_multiple_hits_report_each_line(harness):
     assert line_numbers == [1, 3]
 
 
+def test_multiline_private_key_block_is_a_hit(harness):
+    # A full key block spans several lines: the line-based patterns see
+    # the header, and the whole-text pass must report the block itself
+    # (pattern_id "private-key-block") at its starting line.
+    path = _write_text(
+        harness,
+        "block.txt",
+        [
+            "ordinary first line",
+            "-----BEGIN PRIVATE KEY-----",
+            "Zm9vYmFyZGVjb2RlZA==",
+            "-----END PRIVATE KEY-----",
+        ],
+    )
+    payload = _scan(harness, path)
+    assert payload["hit"] is True
+    block_matches = [
+        match
+        for match in payload["matches"]
+        if match["pattern_id"] == "private-key-block"
+    ]
+    assert block_matches, "the multiline block must be reported"
+    assert block_matches[0]["line_no"] == 2
+
+
+def test_key_block_body_never_appears_in_the_output(harness):
+    path = _write_text(
+        harness,
+        "block-secret.txt",
+        [
+            "-----BEGIN PRIVATE KEY-----",
+            "Zm9vYmFyZGVjb2RlZA==",
+            "-----END PRIVATE KEY-----",
+        ],
+    )
+    result = harness.run_raw("scan-text", "--file", str(path))
+    assert result.returncode == 0, result.stderr
+    assert "Zm9vYmFyZGVjb2RlZA==" not in result.stdout
+    assert "Zm9vYmFyZGVjb2RlZA==" not in result.stderr
+
+
 def test_scan_text_on_missing_file_fails(harness):
     result = harness.run_raw(
         "scan-text", "--file", str(harness.tmp_path / "missing.txt")
