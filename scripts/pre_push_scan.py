@@ -10,9 +10,10 @@
 
 テスト配下のダミー値は検閲の対象外とする。tests/ のフィクスチャは
 秘匿風文字列を意図的に含む（scan-text のテスト対象そのもの）ため、
-明らかに合成値であることが分かる行だけを _DUMMY_MARKERS で除外する。
-実値（本物のメール・電話番号・APIキー等）にはマーカーが付かないため、
-混入は別途検出される。PEMヘッダのパターンは行頭に限定する
+パターンにマッチした値そのものが明らかに合成値（_DUMMY_MARKERS を
+含む）か、リポジトリ自身の公開識別子である場合だけを除外する。
+除外は行単位ではない: 同じ行にダミーと本物の値が混在すれば、
+本物の値は検出される。PEMヘッダのパターンは行頭に限定する
 （本物の秘密鍵ファイルではヘッダは行頭にある。テストの
 Pythonリテラル内に埋め込まれたヘッダは行頭に無い）。
 """
@@ -62,9 +63,34 @@ _DUMMY_MARKERS = (
 )
 
 
-def _is_dummy_line(line: str, extra_markers: tuple[str, ...] = ()) -> bool:
-    lowered = line.lower()
-    return any(marker in lowered for marker in _DUMMY_MARKERS + extra_markers)
+def _is_dummy_match(matched: str, public_markers: tuple[str, ...] = ()) -> bool:
+    """マッチした値そのものが合成値・公開識別子なら True。
+
+    行全体ではなくマッチした値だけを見る。同じ行にダミーと本物の値が
+    混在する場合、本物の値はダミー扱いされない。
+    公開識別子（オーナー名・owner/repo）は、マッチした値がそれ自体と
+    一致する場合だけ除外する。
+    """
+    lowered = matched.lower()
+    if any(marker in lowered for marker in _DUMMY_MARKERS):
+        return True
+    return lowered in public_markers
+
+
+def _line_hit_patterns(
+    line: str,
+    compiled: list[tuple[str, re.Pattern[str]]],
+    public_markers: tuple[str, ...] = (),
+) -> list[str]:
+    """1行を検査し、ダミーでないマッチがあったパターン名を返す。"""
+    names: list[str] = []
+    for name, regex in compiled:
+        if any(
+            not _is_dummy_match(match.group(0), public_markers)
+            for match in regex.finditer(line)
+        ):
+            names.append(name)
+    return names
 
 
 def _public_remote_markers() -> tuple[str, ...]:
@@ -133,12 +159,9 @@ def main() -> int:
             continue
         relative = path.relative_to(REPO_ROOT)
         for lineno, line in enumerate(text.splitlines(), start=1):
-            if _is_dummy_line(line, public_markers):
-                continue
-            for name, regex in compiled:
-                if regex.search(line):
-                    print(f"HIT: {relative}:{lineno} pattern={name}")
-                    hits += 1
+            for name in _line_hit_patterns(line, compiled, public_markers):
+                print(f"HIT: {relative}:{lineno} pattern={name}")
+                hits += 1
     if hits:
         print(f"検閲で {hits} 件ヒットしました。push を止めて内容を確認してください。")
         return 1
