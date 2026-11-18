@@ -81,6 +81,33 @@ def test_heading_path_resets_at_a_new_top_level_heading(harness):
     ]
 
 
+def test_headings_inside_backtick_fences_are_not_sections(harness):
+    _repo_with_document(
+        harness,
+        "# Top\n\n```\n# not a heading\n## also not a heading\n```\n\n"
+        "## Real\n\nbody\n",
+    )
+    assert _headings(harness) == ["Top", "Top > Real"]
+
+
+def test_headings_inside_tilde_fences_are_not_sections(harness):
+    _repo_with_document(
+        harness,
+        "# Top\n\n~~~python\n# comment\n~~~\n\nbody\n",
+    )
+    assert _headings(harness) == ["Top"]
+
+
+def test_fence_close_needs_at_least_the_opening_length(harness):
+    # A shorter fence line does not close the block, so the "#" line
+    # after it is still code, not a heading.
+    _repo_with_document(
+        harness,
+        "# Top\n\n````\n```\n# still code\n````\n\n## Real\n\nbody\n",
+    )
+    assert _headings(harness) == ["Top", "Top > Real"]
+
+
 def test_section_hash_is_a_sha256_hex_digest(harness):
     _repo_with_document(harness)
     entry = harness.extracted_file("doc.md")

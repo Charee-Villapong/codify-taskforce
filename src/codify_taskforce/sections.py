@@ -8,6 +8,16 @@ from dataclasses import dataclass
 
 _HEADING_RE = re.compile(r"^(#{1,6})[ \t]+(.*)$")
 _CLOSING_HASHES_RE = re.compile(r"\s+#+\s*$")
+_FENCE_RE = re.compile(r"^[ \t]{0,3}(`{3,}|~{3,})(.*)$")
+
+
+def _fence_marker(line: str) -> tuple[str, int, str] | None:
+    """フェンス行なら (フェンス文字, 個数, 後続文字列) を返す。"""
+    match = _FENCE_RE.match(line)
+    if not match:
+        return None
+    marks = match.group(1)
+    return marks[0], len(marks), match.group(2)
 
 
 @dataclass(frozen=True)
@@ -30,15 +40,39 @@ def split_sections(content: str) -> list[Section]:
     heading を空文字のセクションとする。section_hash はセクション本文
     （見出し行＋本文）の sha256。全セクションの text を連結すると元の
     ファイル内容と一致する。
+
+    フェンスドコードブロック（``` または ~~~ で囲まれた範囲）の内側は
+    見出しとして扱わない（コード例中の "# コメント" 等を誤認しない）。
     """
     lines = content.splitlines(keepends=True)
     chunks: list[tuple[list[str], str]] = []
     current_lines: list[str] = []
     current_heading = ""
     stack: list[tuple[int, str]] = []
+    in_fence = False
+    fence_char = ""
+    fence_len = 0
 
     for line in lines:
         stripped = line.rstrip("\r\n")
+        fence = _fence_marker(stripped)
+        if in_fence:
+            current_lines.append(line)
+            if (
+                fence is not None
+                and fence[0] == fence_char
+                and fence[1] >= fence_len
+                and not fence[2].strip()
+            ):
+                in_fence = False
+            continue
+        if fence is not None and not (fence[0] == "`" and "`" in fence[2]):
+            # 開始フェンス。バッククォートのフェンスは情報文字列に
+            # バッククォートを含められない（CommonMark）。
+            in_fence = True
+            fence_char, fence_len = fence[0], fence[1]
+            current_lines.append(line)
+            continue
         match = _HEADING_RE.match(stripped)
         if match:
             if current_lines:
