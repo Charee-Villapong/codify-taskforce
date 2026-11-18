@@ -692,6 +692,7 @@ const allReports = []
   .concat(contradictions.reports || [])
   .concat(judge.reports || [])
   .concat(secrecy.reports || [])
+  .concat(fileStage.reports || [])
   .concat(record.reports || []);
 
 if (record.status !== "success") {
