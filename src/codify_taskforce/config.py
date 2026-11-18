@@ -109,15 +109,32 @@ def load_config(path: str | Path | None = None) -> Config:
     )
 
 
+def _normalize_rel_path(value: str) -> str:
+    """相対パスを正規化する。
+
+    先頭の "./"、末尾の "/"、連続した "/"、"." セグメントを取り除き、
+    表記ゆれ（"private/" と "private"、"./private/a.md" と
+    "private/a.md"）を同一視できる形にする。
+    """
+    parts = [part for part in value.split("/") if part not in ("", ".")]
+    return "/".join(parts)
+
+
 def is_denylisted(rel_path: str, denylist: list[str]) -> bool:
     """パスベースの除外判定。内容は開かない。
 
     denylist の各要素は、リポジトリ相対パスの完全一致か、
     パスセグメント（"/" で区切った要素）の一致で判定する。
+    比較はパスを正規化してから行うため、末尾スラッシュや "./" の
+    有無といった表記ゆれで判定が変わることはない。
     部分一致（"private" が "private-notes.md" に当たる等）はしない。
     """
-    segments = rel_path.split("/")
+    normalized = _normalize_rel_path(rel_path)
+    segments = normalized.split("/") if normalized else []
     for entry in denylist:
-        if entry == rel_path or entry in segments:
+        normalized_entry = _normalize_rel_path(entry)
+        if not normalized_entry:
+            continue
+        if normalized_entry == normalized or normalized_entry in segments:
             return True
     return False

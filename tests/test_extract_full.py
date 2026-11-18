@@ -107,6 +107,39 @@ def test_denylist_segment_does_not_match_partial_names(harness):
     assert paths == ["privately/keep.md", "rules/private-notes.md"]
 
 
+def test_denylist_entry_with_trailing_slash_is_excluded(harness):
+    # "private/" must behave exactly like "private": a trailing slash
+    # in the config must not silently disable the entry.
+    repo = harness.init_repo()
+    harness.write_file(repo, "rules/keep.md", "# Keep\n\nkeep\n")
+    harness.write_file(repo, "private/one.md", "# One\n\n1\n")
+    harness.commit_all(repo, "files")
+    harness.config_for_repo(
+        repo,
+        ["rules/keep.md", "private/one.md"],
+        denylist=["private/"],
+    )
+
+    paths = [entry["path"] for entry in harness.extracted_files()]
+    assert paths == ["rules/keep.md"]
+
+
+def test_denylist_entry_with_dot_slash_prefix_is_excluded(harness):
+    # "./rules/secret.md" must match the path "rules/secret.md".
+    repo = harness.init_repo()
+    harness.write_file(repo, "rules/keep.md", "# Keep\n\nkeep\n")
+    harness.write_file(repo, "rules/secret.md", "# Secret\n\nsecret\n")
+    harness.commit_all(repo, "two files")
+    harness.config_for_repo(
+        repo,
+        ["rules/keep.md", "rules/secret.md"],
+        denylist=["./rules/secret.md"],
+    )
+
+    paths = [entry["path"] for entry in harness.extracted_files()]
+    assert paths == ["rules/keep.md"]
+
+
 def test_denylisted_file_content_is_never_opened(harness):
     """A denylisted file with undecodable bytes must not break extract.
 
