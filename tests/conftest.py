@@ -107,6 +107,8 @@ class CodifyHarness:
         denylist: list[str] | None = None,
         weekly_issue_cap: int = 3,
         daily_presentation_cap: int = 2,
+        driver_presentation_cap: int = 3,
+        driver_presentation_interval_days: int = 14,
         checklist_version: str = "1",
         local_patterns_file: str | Path | None = None,
         config_path: Path | None = None,
@@ -118,6 +120,8 @@ class CodifyHarness:
             "queue_file": str(self.queue_file),
             "weekly_issue_cap": weekly_issue_cap,
             "daily_presentation_cap": daily_presentation_cap,
+            "driver_presentation_cap": driver_presentation_cap,
+            "driver_presentation_interval_days": driver_presentation_interval_days,
             "checklist_version": checklist_version,
             "org_repo": ORG_REPO,
         }
