@@ -414,8 +414,15 @@ def test_queue_add_preserves_answer_kind_hold_and_presentation_count(
 
 
 def test_config_without_driver_keys_fails_startup(harness, simple_repo):
-    # simple_repo の設定には driver キーが無い。REQUIRED_KEYS に
-    # 追加されれば起動時に ConfigError で失敗する。
+    # simple_repo の設定は write_config の既定で driver キーを含むため、
+    # ここで自前で 2 キーを削除した config に書き戻す。REQUIRED_KEYS に
+    # driver キーが入っていれば起動時に ConfigError で失敗する。
+    config = json.loads(harness.config_path.read_text(encoding="utf-8"))
+    config.pop("driver_presentation_cap", None)
+    config.pop("driver_presentation_interval_days", None)
+    harness.config_path.write_text(
+        json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     result = harness.run_raw("queue-list", "--date", DAY_S)
     assert result.returncode != 0
 
