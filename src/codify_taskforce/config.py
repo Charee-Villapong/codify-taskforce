@@ -17,6 +17,8 @@ REQUIRED_KEYS = (
     "daily_presentation_cap",
     "checklist_version",
     "org_repo",
+    "driver_presentation_cap",
+    "driver_presentation_interval_days",
 )
 
 
@@ -40,6 +42,8 @@ class Config:
     daily_presentation_cap: int
     checklist_version: str
     org_repo: str
+    driver_presentation_cap: int
+    driver_presentation_interval_days: int
     local_patterns_file: str | None = None
     trial_weeks: int = 0
     external_paid_api_allowed: bool = False
@@ -101,6 +105,8 @@ def load_config(path: str | Path | None = None) -> Config:
         daily_presentation_cap=int(raw["daily_presentation_cap"]),
         checklist_version=str(raw["checklist_version"]),
         org_repo=str(raw["org_repo"]),
+        driver_presentation_cap=int(raw["driver_presentation_cap"]),
+        driver_presentation_interval_days=int(raw["driver_presentation_interval_days"]),
         local_patterns_file=(
             str(raw["local_patterns_file"]) if raw.get("local_patterns_file") else None
         ),

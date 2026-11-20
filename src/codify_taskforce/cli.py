@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import sys
 from pathlib import Path
 
 from . import diff as diff_mod
+from . import driver as driver_mod
 from . import queue as queue_mod
 from . import registry as registry_mod
 from . import scan as scan_mod
@@ -317,6 +319,59 @@ def cmd_queue_resolve(config: Config, args: argparse.Namespace) -> dict:
 
 
 # ----------------------------------------------------------------------
+# queue-driver（本人確認待ちキュー定期提示ドライバー、Issue #88）
+# ----------------------------------------------------------------------
+
+
+def _require_iso_date(value: str) -> None:
+    """YYYY-MM-DD 形式の日付でなければ CliError（exit 1）。"""
+    try:
+        datetime.date.fromisoformat(value)
+    except ValueError as exc:
+        raise CliError(f"date の日付形式が不正です: {value!r}") from exc
+
+
+def _reload_queue_before_save(config: Config) -> dict:
+    """保存直前のキュー再読込。外部で変わった内容を消さないため、
+    適用・保存はこの再読込後のキューに対して行う。"""
+    return queue_mod.load_queue(config.queue_file)
+
+
+def cmd_queue_driver_select(config: Config, args: argparse.Namespace) -> dict:
+    queue = queue_mod.load_queue(config.queue_file)
+    items = driver_mod.select_for_presentation(queue, args.date, config)
+    total_pending = sum(
+        1 for item in queue.get("items", []) if item.get("status") == "pending"
+    )
+    return {"items": items, "total_pending": total_pending}
+
+
+def cmd_queue_driver_presented(config: Config, args: argparse.Namespace) -> dict:
+    _require_iso_date(args.date)
+    keys = [item for item in args.keys.split(",") if item]
+    # 保存直前にキューファイルを読み直す。選定（select）時から時間が
+    # 経っていても、その間に外部で変わった内容を消さずに保存できる。
+    # 適用・保存はこの読み直したキューに対して行う。
+    queue = _reload_queue_before_save(config)
+    updated = driver_mod.record_presented(queue, keys, args.date)
+    queue_mod.save_queue_atomic(config.queue_file, queue)
+    return {"ok": True, "updated": updated}
+
+
+def cmd_queue_driver_answer(config: Config, args: argparse.Namespace) -> dict:
+    if args.answer_kind not in driver_mod.ANSWER_KINDS:
+        raise CliError(
+            f"answer_kind が不正です: {args.answer_kind!r} "
+            f"（許容値: {', '.join(driver_mod.ANSWER_KINDS)}）"
+        )
+    # 保存直前にキューファイルを読み直す（presented と同じ経路）。
+    queue = _reload_queue_before_save(config)
+    applied = driver_mod.apply_answer(queue, args.key, args.answer_kind)
+    queue_mod.save_queue_atomic(config.queue_file, queue)
+    return {"ok": True, "applied": applied}
+
+
+# ----------------------------------------------------------------------
 # registry
 # ----------------------------------------------------------------------
 
@@ -346,6 +401,9 @@ _COMMANDS = {
     "queue-list": cmd_queue_list,
     "queue-present": cmd_queue_present,
     "queue-resolve": cmd_queue_resolve,
+    "queue-driver-select": cmd_queue_driver_select,
+    "queue-driver-presented": cmd_queue_driver_presented,
+    "queue-driver-answer": cmd_queue_driver_answer,
     "registry-seed": cmd_registry_seed,
     "registry-list": cmd_registry_list,
 }
@@ -399,6 +457,23 @@ def build_parser() -> argparse.ArgumentParser:
         "queue-resolve", help="確認待ち項目を回答済みにする"
     )
     queue_resolve_parser.add_argument("--key", required=True)
+
+    queue_driver_select_parser = subparsers.add_parser(
+        "queue-driver-select", help="定期提示ドライバーの提示対象を出す"
+    )
+    queue_driver_select_parser.add_argument("--date", required=True)
+
+    queue_driver_presented_parser = subparsers.add_parser(
+        "queue-driver-presented", help="定期提示した項目の提示日と回数を記録する"
+    )
+    queue_driver_presented_parser.add_argument("--date", required=True)
+    queue_driver_presented_parser.add_argument("--keys", required=True)
+
+    queue_driver_answer_parser = subparsers.add_parser(
+        "queue-driver-answer", help="定期提示への本人の回答を反映する"
+    )
+    queue_driver_answer_parser.add_argument("--key", required=True)
+    queue_driver_answer_parser.add_argument("--answer-kind", required=True)
 
     subparsers.add_parser("registry-seed", help="先行事例2件をレジストリへ登録する")
     subparsers.add_parser("registry-list", help="レジストリの登録内容を出す")

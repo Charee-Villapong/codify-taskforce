@@ -17,6 +17,9 @@ _KNOWN_FIELDS = (
     "section_hash",
     "reason_code",
     "created",
+    "answer_kind",
+    "hold",
+    "presentation_count",
 )
 
 
@@ -110,13 +113,17 @@ def _parse_date(value: object, field: str) -> datetime.date:
         raise QueueError(f"{field} の日付形式が不正です: {value!r}") from exc
 
 
-def list_presentable(queue: dict, date: str, cap: int) -> tuple[list[dict], int]:
+def list_presentable(
+    queue: dict, date: str, cap: int, interval_days: int = 1
+) -> tuple[list[dict], int]:
     """提示対象を created の古い順に cap 件まで返す。total_pending も返す。
 
-    提示対象 = status が pending かつ last_presented が null か date より前。
+    提示対象 = status が pending かつ hold でなく、last_presented が
+    null か date から interval_days 日以上前。
     日付の比較は date・last_presented を日付として解釈して行い、
     どちらかの形式が不正なら QueueError。
-    total_pending は pending の全件数（提示対象に限らない）。
+    total_pending は pending の全件数（hold を含む、提示対象に限らない）。
+    interval_days の既定値 1 は現行動作（翌日から再提示）の維持。
     """
     target = _parse_date(date, "date")
     pending = [
@@ -125,8 +132,12 @@ def list_presentable(queue: dict, date: str, cap: int) -> tuple[list[dict], int]
     eligible = [
         item
         for item in pending
-        if item.get("last_presented") is None
-        or _parse_date(item.get("last_presented"), "last_presented") < target
+        if not item.get("hold")
+        and (
+            item.get("last_presented") is None
+            or (target - _parse_date(item.get("last_presented"), "last_presented")).days
+            >= interval_days
+        )
     ]
     eligible.sort(key=lambda item: str(item.get("created") or ""))
     return eligible[:cap], len(pending)
@@ -143,8 +154,13 @@ def present(queue: dict, date: str, ids: list[str]) -> int:
     return updated
 
 
-def resolve(queue: dict, key: str) -> None:
-    """指定 key の項目を answered にする（見つからなければ何もしない）。"""
+def resolve(queue: dict, key: str, answer_kind: str | None = None) -> None:
+    """指定 key の項目を answered にする（見つからなければ何もしない）。
+
+    answer_kind を渡した場合はその項目へ記録する。
+    """
     for item in queue.get("items", []):
         if item.get("key") == key:
             item["status"] = "answered"
+            if answer_kind is not None:
+                item["answer_kind"] = answer_kind

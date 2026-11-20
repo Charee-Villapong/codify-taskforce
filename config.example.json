@@ -22,6 +22,8 @@
     "generated",
     "data"
   ],
+  "driver_presentation_cap": 3,
+  "driver_presentation_interval_days": 14,
   "external_paid_api_allowed": false,
   "local_patterns_file": "/path/to/codify-taskforce-data/secret_patterns.local.txt",
   "org_repo": "OWNER/ai-organization",
