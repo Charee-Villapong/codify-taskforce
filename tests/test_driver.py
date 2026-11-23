@@ -568,3 +568,129 @@ def test_weekly_scan_starts_with_driver_keys_in_config(harness, simple_repo):
     assert isinstance(payload["files"], list)
     result = harness.run_raw("queue-list", "--date", DAY_S)
     assert result.returncode == 0, result.stderr
+
+
+# ----------------------------------------------------------------------
+# 9. section_hash 指定（見出しにカンマを含む key への対処）
+#
+# 不具合の仕様: key は repo|path|heading|hash の複合文字列で、見出しに
+# カンマを含む項目（実例: ig-repurpose の "Extract, do not summarise"）は
+# --keys のカンマ区切りでは分割されてしまい、提示を記録できない。
+# section_hash は16進文字列のみで区切り文字と衝突しないため、提示記録と
+# 回答反映は hash でも指定できること。未知の hash の扱いは未知の key と
+# そろえる（数えない／applied=False）。
+# ----------------------------------------------------------------------
+
+
+def _comma_item(tag: str, created: str, **overrides) -> dict:
+    key = f"/tmp/dummy-repo|rules/a.md|Extract, do not summarise|{tag * 64}"
+    item = queue_item(key, created)
+    item["section_hash"] = tag * 64
+    item["heading"] = "Extract, do not summarise"
+    item.update(overrides)
+    return item
+
+
+def _present_hashes(harness, hashes, select_date: str = DAY_S) -> dict:
+    return harness.run_json(
+        "queue-driver-presented", "--date", select_date, "--hashes", ",".join(hashes)
+    )
+
+
+def _answer_hash(harness, section_hash: str, answer_kind: str) -> dict:
+    return harness.run_json(
+        "queue-driver-answer", "--hash", section_hash, "--answer-kind", answer_kind
+    )
+
+
+def test_driver_presented_by_hash_records_comma_key_item(harness, simple_repo):
+    _driver_config(harness, simple_repo)
+    _add(harness, [_comma_item("a", "2026-11-10T09:00:00")])
+    payload = _present_hashes(harness, ["a" * 64])
+    assert payload == {"ok": True, "updated": 1}
+    item = _queue_items(harness)[0]
+    assert item["last_presented"] == DAY_S
+    assert item["presentation_count"] == 1
+    assert item["status"] == "pending"
+
+
+def test_driver_presented_by_hashes_records_each(harness, simple_repo):
+    _driver_config(harness, simple_repo)
+    _add(
+        harness,
+        [
+            _comma_item("a", "2026-11-10T09:00:00"),
+            _item("b", "2026-11-10T10:00:00"),
+        ],
+    )
+    payload = _present_hashes(harness, ["a" * 64, "b" * 64])
+    assert payload == {"ok": True, "updated": 2}
+    for item in _queue_items(harness):
+        assert item["last_presented"] == DAY_S
+
+
+def test_driver_presented_unknown_hash_is_not_counted(harness, simple_repo):
+    _driver_config(harness, simple_repo)
+    _add(harness, [_comma_item("a", "2026-11-10T09:00:00")])
+    payload = _present_hashes(harness, ["a" * 64, "e" * 64])
+    assert payload == {"ok": True, "updated": 1}
+    assert _queue_items(harness)[0]["last_presented"] == DAY_S
+
+
+def test_driver_presented_ambiguous_hash_exits_1(harness, simple_repo):
+    _driver_config(harness, simple_repo)
+    _add(
+        harness,
+        [
+            _item("a", "2026-11-10T09:00:00", section_hash="f" * 64),
+            _item("b", "2026-11-10T10:00:00", section_hash="f" * 64),
+        ],
+    )
+    result = harness.run_raw(
+        "queue-driver-presented", "--date", DAY_S, "--hashes", "f" * 64
+    )
+    assert result.returncode == 1
+    for item in _queue_items(harness):
+        assert item["last_presented"] is None
+
+
+def test_driver_presented_without_keys_or_hashes_exits_1(harness, simple_repo):
+    _driver_config(harness, simple_repo)
+    _add(harness, [_item("a", "2026-11-10T09:00:00")])
+    result = harness.run_raw("queue-driver-presented", "--date", DAY_S)
+    assert result.returncode == 1
+    assert _item_by_key(harness, _key("a"))["last_presented"] is None
+
+
+def test_driver_answer_by_hash_records_comma_key_item(harness, simple_repo):
+    _driver_config(harness, simple_repo)
+    _add(harness, [_comma_item("a", "2026-11-10T09:00:00")])
+    payload = _answer_hash(harness, "a" * 64, "approved")
+    assert payload == {"ok": True, "applied": True}
+    item = _queue_items(harness)[0]
+    assert item["status"] == "answered"
+    assert item["answer_kind"] == "approved"
+
+
+def test_driver_answer_unknown_hash_applied_false(harness, simple_repo):
+    _driver_config(harness, simple_repo)
+    _add(harness, [_comma_item("a", "2026-11-10T09:00:00")])
+    payload = _answer_hash(harness, "e" * 64, "approved")
+    assert payload == {"ok": True, "applied": False}
+    assert _queue_items(harness)[0]["status"] == "pending"
+
+
+def test_driver_answer_with_both_key_and_hash_exits_1(harness, simple_repo):
+    _driver_config(harness, simple_repo)
+    _add(harness, [_comma_item("a", "2026-11-10T09:00:00")])
+    result = harness.run_raw(
+        "queue-driver-answer",
+        "--key",
+        _queue_items(harness)[0]["key"],
+        "--hash",
+        "a" * 64,
+        "--answer-kind",
+        "approved",
+    )
+    assert result.returncode == 1
+    assert _queue_items(harness)[0]["status"] == "pending"

@@ -67,3 +67,42 @@ def apply_answer(queue: dict, key: str, answer_kind: str) -> bool:
             queue_mod.resolve(queue, key, answer_kind)
             return True
     return False
+
+
+def key_for_hash(queue: dict, section_hash: str) -> str | None:
+    """section_hash から key を引く。無ければ None、複数一致は ValueError。
+
+    key は repo|path|heading|hash の複合文字列で、見出しにカンマを
+    含む項目は CLI の --keys（カンマ区切り）では渡せない。
+    section_hash は16進文字列のみで区切り文字と衝突しないため、
+    提示記録・回答反映ではこちらでも指定できるようにする。
+    """
+    matches = [
+        item.get("key")
+        for item in queue.get("items", [])
+        if item.get("section_hash") == section_hash
+    ]
+    if len(matches) > 1:
+        raise ValueError(f"section_hash が複数の項目と一致します: {section_hash!r}")
+    return matches[0] if matches else None
+
+
+def record_presented_by_hashes(queue: dict, hashes: list[str], date: str) -> int:
+    """section_hash 指定で提示を記録する。未知の hash は数えない。
+
+    未知の key を数えない record_presented と扱いをそろえる。
+    """
+    keys = []
+    for section_hash in hashes:
+        key = key_for_hash(queue, section_hash)
+        if key is not None:
+            keys.append(key)
+    return record_presented(queue, keys, date)
+
+
+def apply_answer_by_hash(queue: dict, section_hash: str, answer_kind: str) -> bool:
+    """section_hash 指定で回答を反映する。該当が無ければ False。"""
+    key = key_for_hash(queue, section_hash)
+    if key is None:
+        return False
+    return apply_answer(queue, key, answer_kind)

@@ -348,12 +348,22 @@ def cmd_queue_driver_select(config: Config, args: argparse.Namespace) -> dict:
 
 def cmd_queue_driver_presented(config: Config, args: argparse.Namespace) -> dict:
     _require_iso_date(args.date)
-    keys = [item for item in args.keys.split(",") if item]
+    if not args.keys and not args.hashes:
+        raise CliError(
+            "queue-driver-presented には --keys か --hashes のどちらかが必要です。"
+        )
+    keys = [item for item in args.keys.split(",") if item] if args.keys else []
+    hashes = [item for item in args.hashes.split(",") if item] if args.hashes else []
     # 保存直前にキューファイルを読み直す。選定（select）時から時間が
     # 経っていても、その間に外部で変わった内容を消さずに保存できる。
     # 適用・保存はこの読み直したキューに対して行う。
     queue = _reload_queue_before_save(config)
     updated = driver_mod.record_presented(queue, keys, args.date)
+    if hashes:
+        try:
+            updated += driver_mod.record_presented_by_hashes(queue, hashes, args.date)
+        except ValueError as exc:
+            raise CliError(str(exc)) from exc
     queue_mod.save_queue_atomic(config.queue_file, queue)
     return {"ok": True, "updated": updated}
 
@@ -364,9 +374,21 @@ def cmd_queue_driver_answer(config: Config, args: argparse.Namespace) -> dict:
             f"answer_kind が不正です: {args.answer_kind!r} "
             f"（許容値: {', '.join(driver_mod.ANSWER_KINDS)}）"
         )
+    if bool(args.key) == bool(args.hash):
+        raise CliError(
+            "queue-driver-answer には --key か --hash のどちらか一方を指定してください。"
+        )
     # 保存直前にキューファイルを読み直す（presented と同じ経路）。
     queue = _reload_queue_before_save(config)
-    applied = driver_mod.apply_answer(queue, args.key, args.answer_kind)
+    if args.hash:
+        try:
+            applied = driver_mod.apply_answer_by_hash(
+                queue, args.hash, args.answer_kind
+            )
+        except ValueError as exc:
+            raise CliError(str(exc)) from exc
+    else:
+        applied = driver_mod.apply_answer(queue, args.key, args.answer_kind)
     queue_mod.save_queue_atomic(config.queue_file, queue)
     return {"ok": True, "applied": applied}
 
@@ -467,12 +489,14 @@ def build_parser() -> argparse.ArgumentParser:
         "queue-driver-presented", help="定期提示した項目の提示日と回数を記録する"
     )
     queue_driver_presented_parser.add_argument("--date", required=True)
-    queue_driver_presented_parser.add_argument("--keys", required=True)
+    queue_driver_presented_parser.add_argument("--keys")
+    queue_driver_presented_parser.add_argument("--hashes")
 
     queue_driver_answer_parser = subparsers.add_parser(
         "queue-driver-answer", help="定期提示への本人の回答を反映する"
     )
-    queue_driver_answer_parser.add_argument("--key", required=True)
+    queue_driver_answer_parser.add_argument("--key")
+    queue_driver_answer_parser.add_argument("--hash")
     queue_driver_answer_parser.add_argument("--answer-kind", required=True)
 
     subparsers.add_parser("registry-seed", help="先行事例2件をレジストリへ登録する")
