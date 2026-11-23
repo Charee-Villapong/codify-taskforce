@@ -694,3 +694,21 @@ def test_driver_answer_with_both_key_and_hash_exits_1(harness, simple_repo):
     )
     assert result.returncode == 1
     assert _queue_items(harness)[0]["status"] == "pending"
+
+
+def test_queue_present_by_hashes_records_comma_key_item(harness, simple_repo):
+    # queue-present（台帳ハーネス側の記録経路）でも、カンマを含む key の
+    # 項目を --ids では記録できないため、--hashes で記録できること。
+    _driver_config(harness, simple_repo)
+    _add(harness, [_comma_item("a", "2026-11-10T09:00:00")])
+    payload = harness.run_json("queue-present", "--date", DAY_S, "--hashes", "a" * 64)
+    assert payload == {"ok": True, "updated": 1}
+    assert _queue_items(harness)[0]["last_presented"] == DAY_S
+
+
+def test_queue_present_without_ids_or_hashes_exits_1(harness, simple_repo):
+    _driver_config(harness, simple_repo)
+    _add(harness, [_comma_item("a", "2026-11-10T09:00:00")])
+    result = harness.run_raw("queue-present", "--date", DAY_S)
+    assert result.returncode == 1
+    assert _queue_items(harness)[0]["last_presented"] is None

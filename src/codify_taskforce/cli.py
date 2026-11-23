@@ -304,8 +304,19 @@ def cmd_queue_list(config: Config, args: argparse.Namespace) -> dict:
 
 
 def cmd_queue_present(config: Config, args: argparse.Namespace) -> dict:
+    if not args.ids and not args.hashes:
+        raise CliError("queue-present には --ids か --hashes のどちらかが必要です。")
     queue = queue_mod.load_queue(config.queue_file)
-    ids = [item for item in args.ids.split(",") if item]
+    ids = [item for item in args.ids.split(",") if item] if args.ids else []
+    if args.hashes:
+        hashes = [item for item in args.hashes.split(",") if item]
+        try:
+            for section_hash in hashes:
+                key = driver_mod.key_for_hash(queue, section_hash)
+                if key is not None:
+                    ids.append(key)
+        except ValueError as exc:
+            raise CliError(str(exc)) from exc
     updated = queue_mod.present(queue, args.date, ids)
     queue_mod.save_queue_atomic(config.queue_file, queue)
     return {"ok": True, "updated": updated}
@@ -473,7 +484,8 @@ def build_parser() -> argparse.ArgumentParser:
         "queue-present", help="提示した項目の提示日を記録する"
     )
     queue_present_parser.add_argument("--date", required=True)
-    queue_present_parser.add_argument("--ids", required=True)
+    queue_present_parser.add_argument("--ids")
+    queue_present_parser.add_argument("--hashes")
 
     queue_resolve_parser = subparsers.add_parser(
         "queue-resolve", help="確認待ち項目を回答済みにする"
