@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import datetime
 import json
 import sys
 from pathlib import Path
@@ -335,11 +334,15 @@ def cmd_queue_resolve(config: Config, args: argparse.Namespace) -> dict:
 
 
 def _require_iso_date(value: str) -> None:
-    """YYYY-MM-DD 形式の日付でなければ CliError（exit 1）。"""
+    """YYYY-MM-DD 形式の日付でなければ CliError（exit 1）。
+
+    検証の実体は queue._parse_date に統一する（YYYYMMDD や週日付など
+    fromisoformat が通す亜種も弾く）。
+    """
     try:
-        datetime.date.fromisoformat(value)
-    except ValueError as exc:
-        raise CliError(f"date の日付形式が不正です: {value!r}") from exc
+        queue_mod._parse_date(value, "date")
+    except queue_mod.QueueError as exc:
+        raise CliError(str(exc)) from exc
 
 
 def _reload_queue_before_save(config: Config) -> dict:

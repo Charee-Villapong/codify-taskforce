@@ -489,6 +489,31 @@ def test_driver_select_with_malformed_date_exits_1(harness, simple_repo):
     assert result.returncode == 1
 
 
+def test_driver_select_with_compact_date_exits_1(harness, simple_repo):
+    # YYYYMMDD は fromisoformat が通すが、YYYY-MM-DD 形式ではないので弾く。
+    _driver_config(harness, simple_repo)
+    _add(harness, [_item("a", "2026-11-10T09:00:00")])
+    result = harness.run_raw("queue-driver-select", "--date", "20261120")
+    assert result.returncode == 1
+
+
+def test_driver_presented_with_week_date_exits_1(harness, simple_repo):
+    # 週日付（YYYY-Www-D）も YYYY-MM-DD 形式ではないので弾き、
+    # last_presented に記録しない。
+    _driver_config(harness, simple_repo)
+    _add(harness, [_item("a", "2026-11-10T09:00:00")])
+    result = harness.run_raw(
+        "queue-driver-presented",
+        "--date",
+        "2026-W47-5",
+        "--keys",
+        _key("a"),
+    )
+    assert result.returncode == 1
+    item = _item_by_key(harness, _key("a"))
+    assert item["last_presented"] is None
+
+
 def test_driver_select_does_not_modify_queue(harness, simple_repo):
     _driver_config(harness, simple_repo)
     _add(

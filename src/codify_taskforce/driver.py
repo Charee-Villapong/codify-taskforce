@@ -34,7 +34,11 @@ def record_presented(queue: dict, keys: list[str], date: str) -> int:
     presentation_count を +1（None/欠落は 0 とみなす）し、回数が
     3 に達したら hold=True にする。hold 済み・answered の項目は
     触らない。更新件数を返す。
+
+    date は YYYY-MM-DD 形式でなければ QueueError（CLI を経由しない
+    直接呼び出しでも、不正な日付を last_presented に残さない）。
     """
+    queue_mod._parse_date(date, "date")
     wanted = set(keys)
     updated = 0
     for item in queue.get("items", []):

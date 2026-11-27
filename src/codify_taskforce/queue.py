@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime
 import json
 import os
+import re
 import tempfile
 from pathlib import Path
 
@@ -101,14 +102,22 @@ def add_items(queue: dict, items: list[dict]) -> tuple[int, int]:
     return added, skipped
 
 
+_STRICT_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
 def _parse_date(value: object, field: str) -> datetime.date:
     """ISO形式（YYYY-MM-DD）の日付文字列を date に変換する。
 
     文字列として比較せず、必ず日付として解釈する。形式が不正な値は
-    静かに誤判定せず QueueError にする。
+    静かに誤判定せず QueueError にする。fromisoformat は YYYYMMDD や
+    週日付（YYYY-Www-D）も受理してしまうため、形式そのものを
+    YYYY-MM-DD に厳密に限定してから解釈する。
     """
+    text = str(value)
+    if not _STRICT_DATE_RE.match(text):
+        raise QueueError(f"{field} の日付形式が不正です: {value!r}")
     try:
-        return datetime.date.fromisoformat(str(value))
+        return datetime.date.fromisoformat(text)
     except ValueError as exc:
         raise QueueError(f"{field} の日付形式が不正です: {value!r}") from exc
 
